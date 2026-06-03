@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.db import create_db_and_tables, engine
 from app.core.auth import auth_backend, fastapi_users
 from app.schemas.user import UserRead, UserCreate, UserUpdate
-from app.api.endpoints import categories, inventary
+from app.api.endpoints import categories, inventary, type_record, vehicle
 
 
 @asynccontextmanager
@@ -56,4 +56,12 @@ app.include_router(
 # 6. Módulo de Inventario
 app.include_router(
     inventary.router, prefix="/api/inventary", tags=["Gestión de Inventario"]
+)
+
+app.include_router(
+    type_record.router, prefix="/api/type_record", tags=["Gestion de  Flota - Tipos"]
+)
+
+app.include_router(
+    vehicle.router, prefix="/api/vehicle", tags=["Gestion de Flota - Vehículos"]
 )
