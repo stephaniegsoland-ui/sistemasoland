@@ -16,7 +16,7 @@ class Vehicle(VehicleBase, table=True):
     __tablename__ = "vehicles"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="user.id")
-    records: List["FleetRecord"] = Relationship(back_populates="vehicles")
+    records: List["FleetRecord"] = Relationship(back_populates="vehicle")
 
 
 class TypeRecord(SQLModel, table=True):
@@ -34,7 +34,7 @@ class FleetRegistryBase(SQLModel):
     km: int = Field(description="Kilometraje del vehículo al momento del reporte")
 
 
-class FleetRecord(SQLModel):
+class FleetRecord(SQLModel, table=True):
     __tablename__ = "fleet_record"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
