@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import Optional
-from fastapi import Depends, Request
+from fastapi import Depends, Request, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
@@ -72,3 +72,12 @@ auth_backend = AuthenticationBackend(
 fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 
 current_active_user = fastapi_users.current_user(active=True)
+
+
+async def get_supervisor_or_admin(user: User = Depends(current_active_user)):
+    if not hasattr(user, "level") or user.level > 2:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado. Se requiere nivel de Administrador o Supervisor.",
+        )
+    return user
