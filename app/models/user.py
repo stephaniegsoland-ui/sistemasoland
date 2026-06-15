@@ -7,6 +7,7 @@ class BaseUser(SQLModel):
     username: str = Field(unique=True, index=True, nullable=False)
     email: str = Field(unique=True, index=True, nullable=False)
     level: int = Field(default=3, description="1: Admin, 2: Supervisor, 3: Usuario")
+    department: Optional[str] = Field(default=None, description="Departamento o área del usuario")
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
     is_verified: bool = Field(default=False)

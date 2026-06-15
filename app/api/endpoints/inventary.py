@@ -50,6 +50,16 @@ async def get_items_by_category(
     return result.scalars().all()
 
 
+@router.get("/items", response_model=List[ItemInventaryRead])
+async def get_items(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    query = select(ItemInventary).options(selectinload(ItemInventary.category))
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
 @router.get("/dashboard/resumen")
 async def get_dashboard_resumen(
     session: AsyncSession = Depends(get_async_session),

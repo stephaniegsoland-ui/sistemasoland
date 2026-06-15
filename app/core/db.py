@@ -30,3 +30,14 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 async def create_db_and_tables():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        for ddl in [
+            "ALTER TABLE procura ADD COLUMN items JSON NOT NULL DEFAULT '[]'",
+            "ALTER TABLE procura ADD COLUMN `use` VARCHAR(255) NULL",
+            "ALTER TABLE procura ADD COLUMN requester_department VARCHAR(255) NULL",
+            "ALTER TABLE `user` ADD COLUMN department VARCHAR(255) NULL",
+        ]:
+            try:
+                await conn.exec_driver_sql(ddl)
+            except Exception:
+                # La columna ya existe o no es posible modificarla; no detenemos el arranque.
+                pass
