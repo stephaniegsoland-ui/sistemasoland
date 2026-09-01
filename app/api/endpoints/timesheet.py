@@ -121,6 +121,14 @@ async def list_timesheets(
     return res.scalars().all()
 
 
+@router.get("/all")
+async def list_all_timesheets_route(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    return await list_all_timesheets(session=session, user=user)
+
+
 @router.get("/{timesheet_id}", response_model=TimesheetRead)
 async def get_timesheet(timesheet_id: str, session: AsyncSession = Depends(get_async_session), user: User = Depends(current_active_user)):
     ts = await session.get(Timesheet, timesheet_id)
@@ -131,7 +139,6 @@ async def get_timesheet(timesheet_id: str, session: AsyncSession = Depends(get_a
     return ts
 
 
-@router.get("/all")
 async def list_all_timesheets(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),

@@ -4,8 +4,11 @@ import logging
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 from sqlmodel import select
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
+from fastapi_users.password import PasswordHelper
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
@@ -14,7 +17,7 @@ from fastapi_users.authentication import (
 )
 
 from app.models.user import User
-from app.core.db import get_user_db
+from app.core.db import engine, get_user_db
 import base64
 from pathlib import Path
 
@@ -27,6 +30,50 @@ if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
 SECRET = os.getenv("SECRET")
+DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_EMAIL = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@soland.com")
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+
+
+async def ensure_default_admin_user() -> None:
+    async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    password_helper = PasswordHelper()
+
+    async with async_session_maker() as session:
+        existing_user = (await session.execute(select(User).where(User.username == DEFAULT_ADMIN_USERNAME))).scalar_one_or_none()
+        if existing_user is None:
+            user = User(
+                username=DEFAULT_ADMIN_USERNAME,
+                email=DEFAULT_ADMIN_EMAIL,
+                level=1,
+                is_active=True,
+                is_superuser=True,
+                is_verified=True,
+                hashed_password=password_helper.hash(DEFAULT_ADMIN_PASSWORD),
+            )
+            session.add(user)
+            await session.commit()
+            logger.info("Created default admin user '%s' with email '%s'", DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL)
+            return
+
+        try:
+            password_matches = password_helper.verify(DEFAULT_ADMIN_PASSWORD, existing_user.hashed_password)
+        except Exception:
+            password_matches = False
+
+        if password_matches:
+            return
+
+        existing_user.email = existing_user.email or DEFAULT_ADMIN_EMAIL
+        existing_user.level = 1
+        existing_user.is_active = True
+        existing_user.is_superuser = True
+        existing_user.is_verified = True
+        existing_user.hashed_password = password_helper.hash(DEFAULT_ADMIN_PASSWORD)
+
+        session.add(existing_user)
+        await session.commit()
+        logger.info("Reset default admin user '%s' to the known local password", DEFAULT_ADMIN_USERNAME)
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):

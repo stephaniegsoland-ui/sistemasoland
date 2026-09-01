@@ -1,6 +1,7 @@
 import uuid
 from typing import Optional, Dict, Any, List
 from sqlmodel import SQLModel, Field, Column, JSON, Relationship
+from sqlalchemy import Text
 from datetime import date, datetime
 
 
@@ -64,7 +65,7 @@ class VehicleInspection(SQLModel, table=True):
     fuel_level: Optional[str] = None
     tire_condition: Optional[str] = None
     summary_tags: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
-    report: str = Field(default="")
+    report: str = Field(default="", sa_column=Column(Text, nullable=False))
     score: float = Field(default=0.0)
     change_percent: float = Field(default=0.0)
     notes: Optional[str] = None

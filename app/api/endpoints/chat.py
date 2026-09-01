@@ -17,26 +17,33 @@ async def get_messages(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    query = (
-        select(ChatMessage)
-        .order_by(ChatMessage.created_at.asc())
-    )
+    query = select(ChatMessage).where(
+        (ChatMessage.recipient_id.is_(None))
+        | (ChatMessage.sender_id == user.id)
+        | (ChatMessage.recipient_id == user.id)
+    ).order_by(ChatMessage.created_at.asc())
     result = await session.execute(query)
     messages = result.scalars().all()
 
+    user_ids = {message.sender_id for message in messages}
+    user_ids.update(message.recipient_id for message in messages if message.recipient_id)
+    user_rows = await session.execute(select(User).where(User.id.in_(list(user_ids)))) if user_ids else None
     users = {}
-    for message in messages:
-        user_result = await session.get(User, message.sender_id)
-        if user_result:
-            users[message.sender_id] = user_result.username
+    if user_rows:
+        for row in user_rows.scalars().all():
+            users[row.id] = row.username
 
     return [
         ChatMessageRead(
             id=message.id,
             content=message.content,
             sender_id=message.sender_id,
+            recipient_id=message.recipient_id,
             created_at=message.created_at,
             sender_username=users.get(message.sender_id),
+            message_type=message.message_type or "info",
+            reference_title=message.reference_title,
+            reference_url=message.reference_url,
         )
         for message in messages
     ]
@@ -48,7 +55,46 @@ async def create_message(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    message = ChatMessage(content=payload.content.strip(), sender_id=user.id)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El mensaje no puede ir vacío.")
+
+    message_type = (payload.message_type or "info").strip().lower()
+    allowed_types = {"info", "question", "report", "update", "alert"}
+    if message_type not in allowed_types:
+        message_type = "info"
+
+    reference_title = payload.reference_title.strip() if payload.reference_title else None
+    reference_url = payload.reference_url.strip() if payload.reference_url else None
+
+    recipient = None
+    if payload.recipient_id is not None:
+        if payload.recipient_id == user.id:
+            raise HTTPException(status_code=400, detail="No puedes enviarte un mensaje a ti mismo.")
+        recipient = await session.get(User, payload.recipient_id)
+        if recipient is None or not recipient.is_active:
+            raise HTTPException(status_code=404, detail="Usuario destinatario no encontrado.")
+
+    existing_user = await session.get(User, user.id)
+    if existing_user is None:
+        result = await session.execute(
+            select(User).where(User.email == user.email)
+        )
+        existing_user = result.scalar_one_or_none()
+
+    if existing_user is None:
+        session.add(user)
+        await session.flush()
+        existing_user = user
+
+    message = ChatMessage(
+        content=content,
+        sender_id=existing_user.id,
+        recipient_id=recipient.id if recipient else None,
+        message_type=message_type,
+        reference_title=reference_title,
+        reference_url=reference_url,
+    )
     session.add(message)
     await session.commit()
     await session.refresh(message)
@@ -57,6 +103,29 @@ async def create_message(
         id=message.id,
         content=message.content,
         sender_id=message.sender_id,
+        recipient_id=message.recipient_id,
         created_at=message.created_at,
-        sender_username=user.username,
+        sender_username=existing_user.username,
+        message_type=message.message_type,
+        reference_title=message.reference_title,
+        reference_url=message.reference_url,
     )
+
+
+@router.get("/users")
+async def list_chat_users(
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_active_user),
+):
+    result = await session.execute(
+        select(User).where(User.is_active.is_(True), User.id != user.id).order_by(User.username.asc())
+    )
+    return [
+        {
+            "id": str(item.id),
+            "username": item.username,
+            "nombre_completo": item.nombre_completo,
+            "department": item.department,
+        }
+        for item in result.scalars().all()
+    ]

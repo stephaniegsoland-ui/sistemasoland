@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from PIL import Image
 from pydantic import BaseModel
 from sqlmodel import Field, SQLModel, select
-from sqlalchemy import or_
+from sqlalchemy import Column, Text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_active_user
@@ -41,12 +41,13 @@ class SecurityEppReport(SQLModel, table=True):
     turno: Optional[str] = Field(default=None)
     notes: Optional[str] = Field(default=None)
     image_path: str
+    thumbnail_path: Optional[str] = Field(default=None)
     score: float = Field(default=0.0)
     person_detected: bool = Field(default=False)
     present_items: Optional[str] = Field(default=None)
     missing_items: Optional[str] = Field(default=None)
-    summary: str = Field(default="")
-    recommendations: Optional[str] = Field(default=None)
+    summary: str = Field(default="", sa_column=Column(Text, nullable=False))
+    recommendations: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -57,6 +58,7 @@ class SecurityEppReportRead(BaseModel):
     turno: Optional[str] = None
     notes: Optional[str] = None
     image_path: str
+    thumbnail_path: Optional[str] = None
     score: float
     person_detected: bool
     present_items: Optional[str] = None
@@ -156,24 +158,23 @@ async def recognize_user_by_image(file_bytes: bytes, session: AsyncSession) -> T
         try:
             img = face_recognition.load_image_file(io.BytesIO(file_bytes))
             encodings = face_recognition.face_encodings(img)
-            if len(encodings) == 0:
-                return None, None
-            target_encoding = encodings[0]
-            for user in users:
-                user_bytes = get_user_image_bytes(user)
-                if not user_bytes:
-                    continue
-                try:
-                    user_img = face_recognition.load_image_file(io.BytesIO(user_bytes))
-                    user_encs = face_recognition.face_encodings(user_img)
-                    if len(user_encs) == 0:
+            if len(encodings) > 0:
+                target_encoding = encodings[0]
+                for user in users:
+                    user_bytes = get_user_image_bytes(user)
+                    if not user_bytes:
                         continue
-                    dist = face_recognition.face_distance([user_encs[0]], target_encoding)[0]
-                    if dist < 0.6:
-                        precision = max(0.0, 1.0 - dist)
-                        return user.username, precision
-                except Exception:
-                    continue
+                    try:
+                        user_img = face_recognition.load_image_file(io.BytesIO(user_bytes))
+                        user_encs = face_recognition.face_encodings(user_img)
+                        if len(user_encs) == 0:
+                            continue
+                        dist = face_recognition.face_distance([user_encs[0]], target_encoding)[0]
+                        if dist < 0.6:
+                            precision = max(0.0, 1.0 - dist)
+                            return user.username, precision
+                    except Exception:
+                        continue
         except Exception:
             pass
 
@@ -592,13 +593,32 @@ async def analyze_epp_image(
     image_name = f"{uuid.uuid4().hex}_{file.filename}"
     target_path = STATIC_SECURITY_DIR / image_name
     target_path.write_bytes(file_bytes)
+    thumbnail_name = f"{uuid.uuid4().hex}_thumb.jpg"
+    thumbnail_path = STATIC_SECURITY_DIR / thumbnail_name
+    try:
+        thumbnail = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+        thumbnail.thumbnail((480, 480))
+        thumbnail.save(thumbnail_path, format="JPEG", quality=82, optimize=True)
+    except Exception:
+        thumbnail_path = None
+
+    effective_operator_name = recognized_username or operator_name
+    analysis.recognized_username = recognized_username
+    analysis.recognition_precision = recognition_precision
+    analysis.summary = build_analysis_summary(
+        analysis,
+        recognized_username,
+        recognition_precision,
+        operator_name,
+    )
 
     report = SecurityEppReport(
         user_id=user.id,
-        operator_name=operator_name,
+        operator_name=effective_operator_name,
         turno=turno,
         notes=notes,
         image_path=f"/static/security/{image_name}",
+        thumbnail_path=f"/static/security/{thumbnail_name}" if thumbnail_path else None,
         score=analysis.score,
         person_detected=analysis.person_detected,
         present_items=", ".join(analysis.present_items),
@@ -609,15 +629,6 @@ async def analyze_epp_image(
     session.add(report)
     await session.commit()
     await session.refresh(report)
-    analysis.recognized_username = recognized_username
-    analysis.recognition_precision = recognition_precision
-    analysis.summary = build_analysis_summary(
-        analysis,
-        recognized_username,
-        recognition_precision,
-        operator_name,
-    )
-
     return analysis
 
 

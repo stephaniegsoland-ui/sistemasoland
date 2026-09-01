@@ -122,6 +122,27 @@ async def create_db_and_tables():
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
+            async def table_exists(table_name: str) -> bool:
+                query = text(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() AND table_name = :table"
+                )
+                result = await conn.execute(query, {"table": table_name})
+                return result.scalar_one() > 0
+
+            async def rename_legacy_chat_table():
+                legacy_names = ["chatmessage", "chat_message"]
+                existing = [name for name in legacy_names if await table_exists(name)]
+                if "chat_message" in existing:
+                    return
+                if "chatmessage" in existing:
+                    try:
+                        await conn.exec_driver_sql("ALTER TABLE chatmessage RENAME TO chat_message")
+                    except Exception:
+                        pass
+
+            await rename_legacy_chat_table()
+
             async def column_exists(table_name: str, column_name: str) -> bool:
                 query = text(
                     "SELECT COUNT(*) FROM information_schema.columns "
@@ -172,6 +193,7 @@ async def create_db_and_tables():
                     "photo_path": "VARCHAR(255) NULL",
                 },
                 "vehicle_inspection": {
+                    "report": "TEXT NOT NULL",
                     "notes": "TEXT NULL",
                     "before_images": "JSON NULL",
                     "after_images": "JSON NULL",
@@ -179,6 +201,24 @@ async def create_db_and_tables():
                     "tire_condition": "VARCHAR(255) NULL",
                     "summary_tags": "JSON NULL",
                     "pdf_file": "VARCHAR(255) NULL",
+                },
+                "security_epp_report": {
+                    "summary": "TEXT NOT NULL",
+                    "recommendations": "TEXT NULL",
+                    "thumbnail_path": "VARCHAR(255) NULL",
+                },
+                "safety_permit": {
+                    "extracted_text": "TEXT NOT NULL",
+                },
+                "chat_message": {
+                    "recipient_id": "CHAR(32) NULL",
+                    "message_type": "VARCHAR(50) NOT NULL DEFAULT 'info'",
+                    "reference_title": "VARCHAR(255) NULL",
+                    "reference_url": "VARCHAR(500) NULL",
+                },
+                "invoice_retentions": {
+                    "taxable_base": "FLOAT NOT NULL DEFAULT 0.0",
+                    "iva_amount": "FLOAT NOT NULL DEFAULT 0.0",
                 },
             }
 
@@ -198,6 +238,34 @@ async def create_db_and_tables():
                                 )
                             except Exception:
                                 pass
+                    elif table == "vehicle_inspection" and column == "report":
+                        try:
+                            await conn.exec_driver_sql(
+                                "ALTER TABLE vehicle_inspection MODIFY COLUMN report TEXT NOT NULL"
+                            )
+                        except Exception:
+                            pass
+                    elif table == "security_epp_report" and column == "summary":
+                        try:
+                            await conn.exec_driver_sql(
+                                "ALTER TABLE security_epp_report MODIFY COLUMN summary TEXT NOT NULL"
+                            )
+                        except Exception:
+                            pass
+                    elif table == "security_epp_report" and column == "recommendations":
+                        try:
+                            await conn.exec_driver_sql(
+                                "ALTER TABLE security_epp_report MODIFY COLUMN recommendations TEXT NULL"
+                            )
+                        except Exception:
+                            pass
+                    elif table == "safety_permit" and column == "extracted_text":
+                        try:
+                            await conn.exec_driver_sql(
+                                "ALTER TABLE safety_permit MODIFY COLUMN extracted_text TEXT NOT NULL"
+                            )
+                        except Exception:
+                            pass
 
             if await column_exists("vehicle_inspection", "username"):
                 info = await column_info("vehicle_inspection", "username")

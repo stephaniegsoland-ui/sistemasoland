@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-libmysqlclient-dev \
     gcc \
     g++ \
+    libcairo2-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt
