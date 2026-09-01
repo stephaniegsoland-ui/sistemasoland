@@ -44,3 +44,21 @@ urllib3==2.7.0
 uvicorn==0.48.0
 watchfiles==1.2.0
 websockets==16.0
+
+# PDF generation
+reportlab==4.0.0
+
+# Optional ML dependencies for IA classification (install if you want real model inference):
+# torch and transformers provide CLIP zero-shot classification used by app.core.vision
+torch>=2.2.0
+transformers>=4.50.0
+torchvision>=0.17.0
+ftfy>=6.1.1
+
+# Computer vision / face recognition (OPTIONAL on Windows - requires Visual C++ build tools to compile dlib)
+# If you plan to use the highest-quality `face_recognition` backend, install the following
+# after installing Visual C++ Build Tools and CMake (see INSTALL_DLIB_WINDOWS.md)
+face_recognition
+dlib
+opencv-contrib-python
+numpy

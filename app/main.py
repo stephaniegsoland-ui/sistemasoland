@@ -1,16 +1,37 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.core.db import create_db_and_tables, engine
+from app.core.db import create_db_and_tables, engine, repair_legacy_user_photos
 from app.core.auth import auth_backend, fastapi_users
 from app.schemas.user import UserRead, UserCreate, UserUpdate
-from app.api.endpoints import categories, inventary, type_record, vehicle, procura, timesheet
+from app.api.endpoints import categories, inventary, notifications, type_record, vehicle, procura, timesheet, chat, users, security, peaje
+from app.api.endpoints import debug_photos
+
+
+def sync_inspection_static_dirs() -> None:
+    app_dir = Path(__file__).resolve().parent
+    target_dir = app_dir / "static" / "inspections"
+    old_dir = app_dir / "api" / "static" / "inspections"
+    if not target_dir.exists():
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    if old_dir.exists() and old_dir.is_dir():
+        for item in old_dir.iterdir():
+            if item.is_file():
+                destination = target_dir / item.name
+                if not destination.exists():
+                    item.rename(destination)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    sync_inspection_static_dirs()
     await create_db_and_tables()
+    await repair_legacy_user_photos()
     yield
     await engine.dispose()
 
@@ -50,6 +71,16 @@ app.include_router(
 )
 
 app.include_router(
+    users.router, prefix="/api/users", tags=["Gestion de Usuarios"]
+)
+
+app.mount(
+    "/static",
+    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+    name="static",
+)
+
+app.include_router(
     categories.router, prefix="/api/categories", tags=["Gestión de Categorías"]
 )
 
@@ -66,6 +97,13 @@ app.include_router(
     vehicle.router, prefix="/api/vehicle", tags=["Gestion de Flota - Vehículos"]
 )
 
+app.include_router(
+    security.router, prefix="/api/security", tags=["Seguridad EPP"]
+)
+
+app.include_router(
+    debug_photos.router, prefix="/api/debug", tags=["Debug"]
+)
 
 app.include_router(
     procura.router, prefix="/api/procura", tags=["Gestión de Procura"]
@@ -74,3 +112,12 @@ app.include_router(
 app.include_router(
     timesheet.router, prefix="/api/timesheet", tags=["Gestión de Hoja de Tiempo"]
 )
+
+app.include_router(chat.router, prefix="/api/chat", tags=["Chat Interno"])
+
+app.include_router(
+    notifications.router, prefix="/api/notifications", tags=["Notificaciones"]
+)
+
+# Peaje endpoint for vehicle toll submissions (used by frontend /dashboard/vehiculos/peaje)
+app.include_router(peaje.router, prefix="/api/admin/peaje", tags=["Peajes"])

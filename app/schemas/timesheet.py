@@ -10,6 +10,7 @@ class TimesheetEntryCreate(BaseModel):
     end: Optional[str] = None
     activity: Optional[str] = None
     viaticos: Optional[float] = 0.0
+    viatico_type: Optional[str] = None
 
 
 class TimesheetEntryRead(TimesheetEntryCreate):

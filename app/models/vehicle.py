@@ -46,3 +46,27 @@ class FleetRecord(SQLModel, table=True):
 
     vehicle: Optional["Vehicle"] = Relationship(back_populates="records")
     type_record: Optional["TypeRecord"] = Relationship(back_populates="record")
+
+
+class VehicleInspection(SQLModel, table=True):
+    __tablename__ = "vehicle_inspection"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+
+    vehicle_id: uuid.UUID = Field(foreign_key="vehicles.id", nullable=False)
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False)
+    username: Optional[str] = Field(default=None, nullable=True)
+
+    before_image: str
+    after_image: str
+    diff_image: Optional[str] = None
+    before_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    after_images: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    fuel_level: Optional[str] = None
+    tire_condition: Optional[str] = None
+    summary_tags: Optional[List[str]] = Field(default=None, sa_column=Column(JSON))
+    report: str = Field(default="")
+    score: float = Field(default=0.0)
+    change_percent: float = Field(default=0.0)
+    notes: Optional[str] = None
+    pdf_file: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)

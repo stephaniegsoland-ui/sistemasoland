@@ -28,6 +28,8 @@ class ProcuraRead(BaseModel):
     requester_name: Optional[str]
     requester_department: Optional[str]
     status: str
+    notes: Optional[str] = None
+    total_cost: float = 0.0
     requested_at: datetime
     updated_at: datetime
     items: List[ProcuraItemRead] = []
@@ -42,6 +44,8 @@ class ProcuraCreate(BaseModel):
     description: Optional[str] = None
     supplier: Optional[str] = None
     usage: Optional[str] = None
+    notes: Optional[str] = None
+    total_cost: float = 0.0
     items: List[ProcuraItemCreate] = []
     attribute: Dict[str, Any] = {}
 
@@ -52,5 +56,7 @@ class ProcuraUpdate(BaseModel):
     supplier: Optional[str] = None
     usage: Optional[str] = None
     status: Optional[str] = None
+    notes: Optional[str] = None
+    total_cost: Optional[float] = None
     items: Optional[List[ProcuraItemCreate]] = None
     attribute: Optional[Dict[str, Any]] = None

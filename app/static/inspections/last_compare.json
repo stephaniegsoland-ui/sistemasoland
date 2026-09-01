@@ -1,0 +1,19 @@
+{
+  "id": "7b190fa7-a6be-43ce-b35d-68bd06920602",
+  "analysis_engine": "Soland Vision AI (CLIP)",
+  "analysis_mode": "CLIP zero-shot",
+  "issues": [
+    {
+      "idx": 1,
+      "label": "Cambio visual",
+      "confidence": 0.36862871050834656,
+      "engine": "clip",
+      "bbox": [32, 0, 1195, 896],
+      "width": 1163,
+      "height": 896,
+      "area_pct": 62.46,
+      "recommendation": "Revisa la zona y vuelve a inspeccionar con buena iluminación para confirmar."
+    }
+  ],
+  "diff_image": "/static/inspections/88b478934a63411289bd7b3718c8cf2b_diff.png"
+}

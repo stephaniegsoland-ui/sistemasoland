@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from sqlalchemy import String
+from sqlalchemy import String, Float
 from sqlmodel import SQLModel, Field, Column, JSON
 
 
@@ -16,6 +16,8 @@ class Procura(SQLModel, table=True):
     requester_name: Optional[str] = None
     requester_department: Optional[str] = None
     status: str = Field(default="pending")
+    notes: Optional[str] = None
+    total_cost: float = Field(default=0.0, sa_column=Column(Float, nullable=False, default=0.0))
     requested_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     items: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))

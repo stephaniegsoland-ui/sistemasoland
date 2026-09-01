@@ -3,11 +3,15 @@ from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
+import uuid
+
 from app.core.db import get_async_session
 from app.models.inventory import Category
 from app.schemas.inventary import CategoryCreate, CategoryRead
 from app.core.auth import current_active_user
 from app.models.user import User
+from app.models.notification import Notification
+from app.core.notifications import broadcast_notification
 
 router = APIRouter()
 
@@ -29,6 +33,39 @@ async def create_category(
     session.add(new_category)
     await session.commit()
     await session.refresh(new_category)
+
+    # Create a notification for all active users informing about the new category
+    users_q = await session.execute(select(User).where(User.is_active == True))
+    users = users_q.scalars().all()
+
+    notifications = []
+    for u in users:
+        note = Notification(
+            user_id=str(u.id),
+            title="Nueva categoría creada",
+            message=f"Se creó la categoría '{new_category.name}'.",
+            type="info",
+        )
+        notifications.append(note)
+        session.add(note)
+
+    await session.commit()
+
+    # Broadcast to connected users (SSE)
+    for note in notifications:
+        try:
+            payload = {
+                "id": note.id,
+                "user_id": note.user_id,
+                "title": note.title,
+                "message": note.message,
+                "type": note.type,
+                "createdAt": note.created_at.isoformat(),
+            }
+            broadcast_notification(uuid.UUID(note.user_id), payload)
+        except Exception:
+            # ignore broadcast errors
+            pass
     return new_category
 
 

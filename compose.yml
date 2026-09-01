@@ -11,6 +11,27 @@ services:
       - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soland_api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: ${DB_URL_DOCKER}
+      SECRET: ${SECRET}
+      USE_SQLITE_FALLBACK: "false"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
 
 volumes:
   db_data:

@@ -27,6 +27,25 @@ async def create_item(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="La categoria seleccionada no existe.",
         )
+    # Check if an item with the same name and category already exists.
+    query = select(ItemInventary).where(
+        ItemInventary.name == item.name,
+        ItemInventary.category_id == item.category_id,
+    )
+    result = await session.execute(query)
+    existing = result.scalars().first()
+
+    if existing:
+        # If exists, sum quantities and merge attributes (new values override)
+        existing.quantity = (existing.quantity or 0) + (item.quantity or 0)
+        if item.attribute:
+            existing.attribute = {**existing.attribute, **item.attribute}
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        existing.category = category
+        return existing
+
     new_item = ItemInventary.model_validate(item)
     session.add(new_item)
     await session.commit()
@@ -75,16 +94,19 @@ async def get_dashboard_resumen(
         .group_by(Category.name, Category.color_hex)
     )
     result = await session.execute(query)
-    global_total = result.all()
+    rows = result.all()
 
-    resumen = []
+    items = []
+    # Each row contains (name, color_hex, total)
+    for row in rows:
+        # Access by position to be robust
+        name = getattr(row, "name", None) or row[0]
+        color = getattr(row, "color_hex", None) or row[1]
+        total = getattr(row, "total", None) or row[2]
+        items.append({
+            "name": name,
+            "cantidad": int(total or 0),
+            "fill": color or "#3b82f6",
+        })
 
-    for row in global_total:
-        resumen.append(
-            {
-                "category": row.count,
-                "quantity_total": row.total or 0,
-                "color_hex": row.color_hex,
-            }
-        )
-    return resumen
+    return {"items": items}
