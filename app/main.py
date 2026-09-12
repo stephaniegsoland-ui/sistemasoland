@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -40,6 +41,23 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
+def get_allowed_origins() -> list[str]:
+    default_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
+    if not env_origins:
+        return default_origins
+
+    parsed_origins = [
+        origin.strip()
+        for origin in env_origins.split(",")
+        if origin.strip()
+    ]
+    return list(dict.fromkeys(default_origins + parsed_origins))
+
+
 app = FastAPI(
     title="SOLAND API",
     description="Backend para gestion de EPP e IA",
@@ -49,7 +67,7 @@ app = FastAPI(
 # Middleware Settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

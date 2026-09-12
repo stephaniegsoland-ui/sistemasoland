@@ -68,7 +68,8 @@ class InvoiceRetentionApiTests(unittest.TestCase):
 
     def test_extract_invoice_fields_preserves_explicit_zero_iva_and_subtotal(self):
         payload = extract_invoice_fields(
-            """PROVEEDOR: G.V.G. ELpingECTRIC, C.A.
+            """PROVEEDOR: G.V.G. ELping            sudo apt update
+            sudo apt install -y docker.io docker-compose-plugin nginx certbot python3-certbot-nginx gitECTRIC, C.A.
             RIF: J-30123456-7
             SUBTOTAL: 6,868.72
             TOTAL FACTURA: 7,967.72

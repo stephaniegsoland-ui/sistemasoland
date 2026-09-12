@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: soland-api
+    env: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DB_URL
+        value: mysql+aiomysql://soland:soland_password@dbhost:3306/soland_db
+      - key: SECRET
+        generateValue: true
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://soland.com,https://www.soland.com
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_MODEL
+        value: deepseek-chat
