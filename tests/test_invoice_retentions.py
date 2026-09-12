@@ -68,7 +68,7 @@ class InvoiceRetentionApiTests(unittest.TestCase):
 
     def test_extract_invoice_fields_preserves_explicit_zero_iva_and_subtotal(self):
         payload = extract_invoice_fields(
-            """PROVEEDOR: G.V.G. ELECTRIC, C.A.
+            """PROVEEDOR: G.V.G. ELpingECTRIC, C.A.
             RIF: J-30123456-7
             SUBTOTAL: 6,868.72
             TOTAL FACTURA: 7,967.72

@@ -1,5 +1,6 @@
 import uuid
-from typing import Optional
+from typing import Any, Dict, List, Optional
+from sqlalchemy import Column, JSON
 from sqlmodel import SQLModel, Field
 
 
@@ -13,6 +14,8 @@ class BaseUser(SQLModel):
     hoja_vida: Optional[str] = Field(default=None, description="Hoja de vida / perfil del usuario")
     photo_data: Optional[str] = Field(default=None, nullable=True)
     photo_path: Optional[str] = Field(default=None, nullable=True)
+    permissions: Optional[List[str]] = Field(default=None, sa_column=Column(JSON, nullable=True))
+    avatar_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
     is_active: bool = Field(default=True)
     is_superuser: bool = Field(default=False)
     is_verified: bool = Field(default=False)

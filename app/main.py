@@ -8,8 +8,11 @@ from fastapi.staticfiles import StaticFiles
 from app.core.db import create_db_and_tables, engine, repair_legacy_user_photos
 from app.core.auth import auth_backend, ensure_default_admin_user, fastapi_users
 from app.schemas.user import UserRead, UserCreate, UserUpdate
-from app.api.endpoints import categories, inventary, notifications, type_record, vehicle, procura, timesheet, chat, users, security, peaje, safety_permits, companies, environment, admin_overview
-from app.api.endpoints import debug_photos
+from app.api.endpoints import (
+    categories, inventary, notifications, type_record, vehicle, procura, timesheet,
+    chat, users, security, peaje, safety_permits, companies, environment,
+    admin_overview, assistant, debug_photos,
+)
 
 
 def sync_inspection_static_dirs() -> None:
@@ -122,6 +125,10 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat Interno"])
 
 app.include_router(
     notifications.router, prefix="/api/notifications", tags=["Notificaciones"]
+)
+
+app.include_router(
+    assistant.router, prefix="/api/assistant", tags=["Asistente IA"]
 )
 
 app.include_router(

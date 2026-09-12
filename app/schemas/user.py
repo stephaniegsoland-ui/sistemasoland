@@ -1,7 +1,7 @@
 import uuid
 from fastapi_users import schemas
 from pydantic import EmailStr
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 class UserRead(schemas.BaseUser[uuid.UUID]):
@@ -14,6 +14,8 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None
     photo_path: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    avatar_config: Optional[Dict[str, Any]] = None
     is_active: bool
     is_superuser: bool
     is_verified: bool
@@ -27,6 +29,8 @@ class UserCreate(schemas.BaseUserCreate):
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None
     photo_path: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    avatar_config: Optional[Dict[str, Any]] = None
     level: int = 3
     is_active: bool = True
     is_superuser: Optional[bool] = None
@@ -41,6 +45,8 @@ class UserUpdate(schemas.BaseUserUpdate):
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None
     photo_path: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    avatar_config: Optional[Dict[str, Any]] = None
     level: Optional[int] = None
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None

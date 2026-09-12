@@ -122,6 +122,9 @@ async def create_db_and_tables():
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
+            if str(engine.url).startswith("sqlite"):
+                return
+
             async def table_exists(table_name: str) -> bool:
                 query = text(
                     "SELECT COUNT(*) FROM information_schema.tables "
@@ -191,6 +194,8 @@ async def create_db_and_tables():
                     "hoja_vida": "TEXT NULL",
                     "photo_data": "LONGTEXT NULL",
                     "photo_path": "VARCHAR(255) NULL",
+                    "permissions": "JSON NULL",
+                    "avatar_config": "JSON NULL",
                 },
                 "vehicle_inspection": {
                     "report": "TEXT NOT NULL",

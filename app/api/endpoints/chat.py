@@ -1,3 +1,4 @@
+import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +6,9 @@ from sqlmodel import select
 
 from app.core.auth import current_active_user
 from app.core.db import get_async_session
+from app.core.notifications import broadcast_notification
 from app.models.chat import ChatMessage
+from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.chat import ChatMessageCreate, ChatMessageRead
 
@@ -96,6 +99,45 @@ async def create_message(
         reference_url=reference_url,
     )
     session.add(message)
+    await session.flush()
+
+    targets: list[User] = []
+    if recipient is not None:
+        targets = [recipient]
+    else:
+        result = await session.execute(
+            select(User).where(User.is_active.is_(True), User.id != existing_user.id)
+        )
+        targets = result.scalars().all()
+
+    for target_user in targets:
+        preview = content.strip()
+        if len(preview) > 90:
+            preview = preview[:87] + "..."
+
+        notification = Notification(
+            user_id=str(target_user.id),
+            title="Nuevo mensaje",
+            message=f"{existing_user.username}: {preview}",
+            type=message_type or "info",
+            is_read=False,
+        )
+        session.add(notification)
+        await session.flush()
+
+        broadcast_notification(
+            target_user.id,
+            {
+                "id": str(notification.id),
+                "user_id": str(notification.user_id),
+                "title": notification.title,
+                "message": notification.message,
+                "type": notification.type,
+                "read": notification.read,
+                "created_at": notification.created_at.isoformat(),
+            },
+        )
+
     await session.commit()
     await session.refresh(message)
 
