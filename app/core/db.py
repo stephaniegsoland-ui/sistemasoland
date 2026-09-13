@@ -24,7 +24,10 @@ def resolve_database_url(raw_url: str | None = None) -> str:
         sqlite_path = Path(__file__).resolve().parent.parent / "soland.db"
         return f"sqlite+aiosqlite:///{sqlite_path.as_posix()}"
 
-    normalized = configured_url.replace("pymysql", "aiomysql")
+    normalized = configured_url.replace("mysql+mysqldb://", "mysql+aiomysql://")
+    normalized = normalized.replace("mysql+pymysql://", "mysql+aiomysql://")
+    if normalized.startswith("mysql://"):
+        normalized = normalized.replace("mysql://", "mysql+aiomysql://", 1)
     parsed = urlparse(normalized)
     if parsed.scheme.startswith("mysql") and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
         netloc = parsed.netloc
@@ -46,7 +49,10 @@ def normalize_database_url(raw_url: str | None) -> str:
     if not raw_url:
         raise ValueError("DB_URL is not configured")
 
-    normalized = raw_url.replace("pymysql", "aiomysql")
+    normalized = raw_url.replace("mysql+mysqldb://", "mysql+aiomysql://")
+    normalized = normalized.replace("mysql+pymysql://", "mysql+aiomysql://")
+    if normalized.startswith("mysql://"):
+        normalized = normalized.replace("mysql://", "mysql+aiomysql://", 1)
     parsed = urlparse(normalized)
     if parsed.scheme.startswith("mysql") and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
         netloc = parsed.netloc
