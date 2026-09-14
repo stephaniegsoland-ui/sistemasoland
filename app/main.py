@@ -45,10 +45,17 @@ def get_allowed_origins() -> list[str]:
     default_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://frontsoland.vercel.app",
+        "https://www.soland.com",
+        "https://soland.com",
+        "https://api.soland.com",
+        "https://sistemasoland.onrender.com",
+        "https://*.vercel.app",
+        "https://*.soland.com",
     ]
     env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
     if not env_origins:
-        return default_origins
+        return list(dict.fromkeys(default_origins))
 
     parsed_origins = [
         origin.strip()
