@@ -9,7 +9,9 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DB_URL
-        value: mysql+aiomysql://soland:soland_password@dbhost:3306/soland_db
+        value: sqlite+aiosqlite:///./soland.db
+      - key: USE_SQLITE_FALLBACK
+        value: "true"
       - key: SECRET
         generateValue: true
       - key: CORS_ALLOWED_ORIGINS
