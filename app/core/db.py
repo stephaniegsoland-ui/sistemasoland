@@ -129,6 +129,23 @@ async def create_db_and_tables():
             await conn.run_sync(SQLModel.metadata.create_all)
 
             if str(engine.url).startswith("sqlite"):
+                result = await conn.execute(text('PRAGMA table_info("user")'))
+                existing_user_columns = {row[1] for row in result.fetchall()}
+                sqlite_user_columns = {
+                    "department": "VARCHAR(255)",
+                    "nombre_completo": "VARCHAR(255)",
+                    "cargo": "VARCHAR(255)",
+                    "hoja_vida": "TEXT",
+                    "photo_data": "TEXT",
+                    "photo_path": "VARCHAR(255)",
+                    "permissions": "JSON",
+                    "avatar_config": "JSON",
+                }
+                for column, column_type in sqlite_user_columns.items():
+                    if column not in existing_user_columns:
+                        await conn.exec_driver_sql(
+                            f'ALTER TABLE "user" ADD COLUMN "{column}" {column_type}'
+                        )
                 return
 
             async def table_exists(table_name: str) -> bool:
