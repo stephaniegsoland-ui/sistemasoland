@@ -8,9 +8,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from PIL import Image, ImageChops, ImageFilter, ImageDraw as PILImageDraw
 import numpy as np
-import torch
-import torchvision.transforms.functional as TF
-from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights, maskrcnn_resnet50_fpn
 from sqlmodel import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -234,6 +231,8 @@ def get_vehicle_segmentation_model():
     if _vehicle_segmentation_model is not None:
         return _vehicle_segmentation_model
     try:
+        from torchvision.models.detection import MaskRCNN_ResNet50_FPN_Weights, maskrcnn_resnet50_fpn
+
         weights = MaskRCNN_ResNet50_FPN_Weights.DEFAULT
         model = maskrcnn_resnet50_fpn(weights=weights)
         model = model.to("cpu")
@@ -249,6 +248,9 @@ def detect_vehicle_mask(image: Image.Image, threshold: float = 0.35):
     if model is None:
         return None
     try:
+        import torch
+        import torchvision.transforms.functional as TF
+
         img_tensor = TF.to_tensor(image).to("cpu")
         with torch.no_grad():
             outputs = model([img_tensor])[0]
