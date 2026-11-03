@@ -23,6 +23,7 @@ from app.schemas.vehicle import (
     VehicleInspectionRead,
 )
 from app.core.auth import current_active_user, get_supervisor_or_admin
+from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.models.user import User
 import os
 import asyncio
@@ -30,8 +31,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
-STATIC_INSPECTIONS_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "inspections"
-STATIC_INSPECTIONS_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_INSPECTIONS_DIR = media_dir("inspections")
 
 router = APIRouter()
 
@@ -585,10 +585,14 @@ async def compare_vehicle_inspection(
         first_after_filename = None
 
         for idx, file in enumerate(before_images, start=1):
-            suffix = Path(file.filename or f"before_{idx}").suffix or ".jpg"
+            suffix = safe_filename_suffix(file.filename, ".jpg")
             filename = f"{uuid.uuid4().hex}_before_{idx}{suffix}"
             path = STATIC_INSPECTIONS_DIR / filename
-            content = await file.read()
+            content = await read_upload(
+                file,
+                allowed_extensions={".png", ".jpg", ".jpeg", ".webp"},
+                allowed_content_types={"image/png", "image/jpeg", "image/webp"},
+            )
             path.write_bytes(content)
             before_image_paths.append(f"/static/inspections/{filename}")
             before_bytes_list.append(content)
@@ -596,10 +600,14 @@ async def compare_vehicle_inspection(
                 first_before_filename = filename
 
         for idx, file in enumerate(after_images, start=1):
-            suffix = Path(file.filename or f"after_{idx}").suffix or ".jpg"
+            suffix = safe_filename_suffix(file.filename, ".jpg")
             filename = f"{uuid.uuid4().hex}_after_{idx}{suffix}"
             path = STATIC_INSPECTIONS_DIR / filename
-            content = await file.read()
+            content = await read_upload(
+                file,
+                allowed_extensions={".png", ".jpg", ".jpeg", ".webp"},
+                allowed_content_types={"image/png", "image/jpeg", "image/webp"},
+            )
             path.write_bytes(content)
             after_image_paths.append(f"/static/inspections/{filename}")
             after_bytes_list.append(content)

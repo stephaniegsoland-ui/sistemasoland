@@ -1,0 +1,17 @@
+.env
+.env.*
+.git
+.gitignore
+.venv
+env
+__pycache__
+*.py[cod]
+*.pyd
+.pytest_cache
+.mypy_cache
+.vscode
+tests
+tmp_*.py
+inspect_users.py
+temp_fix_username.py
+LOGODEF.png

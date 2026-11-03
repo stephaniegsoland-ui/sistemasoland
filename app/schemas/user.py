@@ -1,4 +1,6 @@
 import uuid
+from datetime import datetime
+from datetime import datetime
 from fastapi_users import schemas
 from pydantic import EmailStr
 from typing import Any, Dict, List, Optional
@@ -16,6 +18,10 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     photo_path: Optional[str] = None
     permissions: Optional[List[str]] = None
     avatar_config: Optional[Dict[str, Any]] = None
+    mfa_enabled: bool = False
+    last_login_at: Optional[datetime] = None
+    mfa_enabled: bool = False
+    last_login_at: Optional[datetime] = None
     is_active: bool
     is_superuser: bool
     is_verified: bool

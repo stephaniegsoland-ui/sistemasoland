@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_active_user
 from app.core.db import get_async_session
+from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.models.environment import EnvironmentalDrill, EnvironmentalDocument, EnvironmentalTalk
 from app.models.user import User
 
-STATIC_ENVIRONMENT_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "environment" / "documents"
-STATIC_ENVIRONMENT_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_ENVIRONMENT_DIR = media_dir("environment", "documents")
 
 router = APIRouter()
 
@@ -170,10 +170,13 @@ async def upload_document(
     if file.filename is None or not file.filename.strip():
         raise HTTPException(status_code=400, detail="Debe adjuntar un archivo.")
 
-    suffix = Path(file.filename).suffix or ".pdf"
+    suffix = safe_filename_suffix(file.filename, ".pdf")
     stored_name = f"{uuid.uuid4().hex}{suffix}"
     destination = STATIC_ENVIRONMENT_DIR / stored_name
-    contents = await file.read()
+    contents = await read_upload(
+        file,
+        allowed_extensions={".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg"},
+    )
     destination.write_bytes(contents)
 
     document = EnvironmentalDocument(

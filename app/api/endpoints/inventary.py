@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import select, func
+from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from typing import List
@@ -86,26 +86,28 @@ async def get_dashboard_resumen(
 ):
     query = (
         select(
+            ItemInventary.id,
+            ItemInventary.name,
+            ItemInventary.quantity,
             Category.name,
             Category.color_hex,
-            func.sum(ItemInventary.quantity).label("total"),
         )
         .join(ItemInventary, Category.id == ItemInventary.category_id)
-        .group_by(Category.name, Category.color_hex)
+        .order_by(ItemInventary.name.asc(), ItemInventary.id.asc())
     )
     result = await session.execute(query)
     rows = result.all()
 
     items = []
-    # Each row contains (name, color_hex, total)
+    # Return one chart entry per inventory item. Category totals remain available
+    # through the categories endpoint used by the second dashboard chart.
     for row in rows:
-        # Access by position to be robust
-        name = getattr(row, "name", None) or row[0]
-        color = getattr(row, "color_hex", None) or row[1]
-        total = getattr(row, "total", None) or row[2]
+        item_id, name, quantity, category_name, color = row
         items.append({
+            "id": item_id,
             "name": name,
-            "cantidad": int(total or 0),
+            "cantidad": int(quantity or 0),
+            "category": category_name,
             "fill": color or "#3b82f6",
         })
 

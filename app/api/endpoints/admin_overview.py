@@ -27,8 +27,9 @@ except Exception:  # pragma: no cover
     easyocr = None
     np = None
 
-from app.core.auth import current_active_user
+from app.core.auth import get_supervisor_or_admin
 from app.core.db import get_async_session
+from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.models.company import Company, CompanyRetention, InvoiceRetention
 from app.models.user import User
 from app.schemas.company import InvoiceRetentionRead, InvoiceRetentionUpdate
@@ -36,8 +37,7 @@ from app.schemas.company import InvoiceRetentionRead, InvoiceRetentionUpdate
 router = APIRouter()
 _easyocr_reader = None
 
-INVOICES_STATIC_DIR = Path(__file__).resolve().parents[2] / "static" / "invoices"
-INVOICES_STATIC_DIR.mkdir(parents=True, exist_ok=True)
+INVOICES_STATIC_DIR = media_dir("invoices")
 LEGACY_INVOICES_STATIC_DIR = Path(__file__).resolve().parents[1] / "static" / "invoices"
 if LEGACY_INVOICES_STATIC_DIR.exists():
     for legacy_file in LEGACY_INVOICES_STATIC_DIR.iterdir():
@@ -159,10 +159,22 @@ def extract_invoice_fields(text: str) -> Dict[str, Any]:
         normalized,
         re.IGNORECASE,
     )
+    supplier_name = _safe_text(supplier_match.group(1) if supplier_match else "") or "Proveedor no identificado"
+    supplier_name = re.sub(
+        r"(?i)\bELping(?:\s+[A-Za-z0-9./:-]+)*\s*gitECTRIC\b",
+        "ELECTRIC",
+        supplier_name,
+    )
+    supplier_name = re.sub(r"(?i)\b(?:sudo|apt(?:-get)?|install|update|docker(?:[\w-]*)?|nginx|certbot|python3-certbot-nginx|git|curl|wget|bash|chmod|ls|cd|rm|echo|sh)\b(?:\s+[A-Za-z0-9./:-]+)*", " ", supplier_name)
+    supplier_name = re.sub(r"(?i)\bELping\b\s*(?:[A-Za-z0-9./:-]+\s+)*?git\s*(?=ECTRIC\b)", "", supplier_name)
+    supplier_name = re.sub(r"(?i)\bELping\b", "", supplier_name)
+    supplier_name = re.sub(r"(?i)\bgit(?=ECTRIC\b)", "", supplier_name)
+    supplier_name = re.sub(r"(?i)\bECTRIC\b", "ELECTRIC", supplier_name)
+    supplier_name = re.sub(r"\s{2,}", " ", supplier_name).strip(" :-, ")
     address_match = re.search(r"(?:DIRECCION|DIRECCIÓN|DOMICILIO)\s*[:\-]?\s*([A-ZÁÉÍÓÚÑ0-9#, .-]+)", normalized, re.IGNORECASE)
 
     return {
-        "supplier_name": _safe_text(supplier_match.group(1) if supplier_match else "") or "Proveedor no identificado",
+        "supplier_name": supplier_name or "Proveedor no identificado",
         "supplier_address": _safe_text(address_match.group(1) if address_match else "") or "",
         "rif": _safe_text(rif_match.group(1) if rif_match else "") or "",
         "total_amount": round(total_value, 2),
@@ -301,7 +313,7 @@ async def _ocr_text_from_file(file: UploadFile) -> str:
 @router.get("/overview", status_code=status.HTTP_200_OK)
 async def admin_overview(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     companies_result = await session.execute(select(Company))
     companies = companies_result.scalars().all()
@@ -369,7 +381,7 @@ async def admin_overview(
 @router.get("/activity", status_code=status.HTTP_200_OK)
 async def admin_activity(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     companies_result = await session.execute(select(Company).order_by(Company.updated_at.desc()).limit(5))
     companies = companies_result.scalars().all()
@@ -399,7 +411,7 @@ async def list_invoices(
     rif: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     stmt = select(InvoiceRetention).order_by(InvoiceRetention.created_at.desc())
     if rif:
@@ -420,16 +432,17 @@ async def list_invoices(
 async def upload_invoice(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Debes adjuntar una factura.")
 
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail="La factura está vacía.")
-
-    extension = Path(file.filename).suffix.lower()
+    extension = safe_filename_suffix(file.filename, ".bin")
+    file_bytes = await read_upload(
+        file,
+        allowed_extensions={".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".txt"},
+        allowed_content_types={"application/pdf", "text/plain", "image/png", "image/jpeg", "image/webp", "image/bmp", "image/tiff"},
+    )
     safe_name = f"invoice_{uuid.uuid4()}{extension}"
     uploaded_path = INVOICES_STATIC_DIR / safe_name
     uploaded_path.write_bytes(file_bytes)
@@ -487,7 +500,7 @@ async def update_invoice_status(
     retention_status: Optional[str] = Form(None),
     collected: Optional[bool] = Form(None),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     invoice = await session.get(InvoiceRetention, invoice_id)
     if not invoice:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.core.auth import current_active_user
+from app.core.auth import get_supervisor_or_admin
 from app.core.db import get_async_session
 from app.models.company import Company, CompanyRetention
 from app.models.user import User
@@ -27,7 +27,7 @@ router = APIRouter()
 async def list_companies(
     query: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     stmt = select(Company).order_by(Company.updated_at.desc())
     if query:
@@ -43,7 +43,7 @@ async def list_companies(
 async def create_company(
     company_in: CompanyCreate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     normalized_name = (company_in.name or "").strip()
     normalized_rif = (company_in.rif or "").strip()
@@ -80,7 +80,7 @@ async def create_company(
 async def get_company(
     company_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     company = await session.get(Company, company_id)
     if not company:
@@ -102,7 +102,7 @@ async def update_company(
     company_id: uuid.UUID,
     company_in: CompanyUpdate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     company = await session.get(Company, company_id)
     if not company:
@@ -123,7 +123,7 @@ async def update_company(
 async def delete_company(
     company_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     company = await session.get(Company, company_id)
     if not company:
@@ -137,7 +137,7 @@ async def delete_company(
 async def list_company_retentions(
     company_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     company = await session.get(Company, company_id)
     if not company:
@@ -154,7 +154,7 @@ async def create_company_retention(
     company_id: uuid.UUID,
     retention_in: CompanyRetentionCreate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     company = await session.get(Company, company_id)
     if not company:
@@ -181,7 +181,7 @@ async def update_company_retention(
     retention_id: uuid.UUID,
     retention_in: CompanyRetentionUpdate,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     retention = await session.get(CompanyRetention, retention_id)
     if not retention or retention.company_id != company_id:
@@ -201,7 +201,7 @@ async def delete_company_retention(
     company_id: uuid.UUID,
     retention_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_supervisor_or_admin),
 ):
     retention = await session.get(CompanyRetention, retention_id)
     if not retention or retention.company_id != company_id:

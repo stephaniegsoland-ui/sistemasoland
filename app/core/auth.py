@@ -1,14 +1,16 @@
 import os
 import uuid
 import logging
+import jwt
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import select
-from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
+from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.password import PasswordHelper
+from fastapi_users.jwt import decode_jwt, generate_jwt
 from fastapi_users.authentication import (
     AuthenticationBackend,
     BearerTransport,
@@ -18,11 +20,11 @@ from fastapi_users.authentication import (
 
 from app.models.user import User
 from app.core.db import engine, get_user_db
+from app.core.storage import media_dir
 import base64
 from pathlib import Path
 
-STATIC_USERS_DIR = Path(__file__).resolve().parent.parent / "static" / "users"
-STATIC_USERS_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_USERS_DIR = media_dir("users")
 
 logger = logging.getLogger("soland.auth")
 if not logger.handlers:
@@ -32,10 +34,28 @@ if not logger.handlers:
 SECRET = os.getenv("SECRET")
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
 DEFAULT_ADMIN_EMAIL = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@soland.com")
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+DEFAULT_ADMIN_PASSWORD = os.getenv(
+    "DEFAULT_ADMIN_PASSWORD",
+    None if APP_ENV in {"production", "prod"} else "admin123",
+)
+BOOTSTRAP_ADMIN = os.getenv(
+    "BOOTSTRAP_ADMIN",
+    "false" if APP_ENV in {"production", "prod"} else "true",
+).lower() in {"1", "true", "yes", "on"}
+
+if not SECRET:
+    raise RuntimeError("SECRET must be configured before starting the API")
+
+if APP_ENV in {"production", "prod"} and not DEFAULT_ADMIN_PASSWORD:
+    raise RuntimeError("DEFAULT_ADMIN_PASSWORD must be configured in production")
 
 
 async def ensure_default_admin_user() -> None:
+    if not BOOTSTRAP_ADMIN or not DEFAULT_ADMIN_PASSWORD:
+        logger.info("Default admin bootstrap skipped")
+        return
+
     async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     password_helper = PasswordHelper()
 
@@ -151,19 +171,46 @@ async def get_user_manager(user_db=Depends(get_user_db)):
     yield UserManager(user_db)
 
 
+ACCESS_TOKEN_LIFETIME_SECONDS = 60 * 60 * 24
+
 bearer_transport = BearerTransport(tokenUrl="api/auth/login")
 cookie_transport = CookieTransport(
     cookie_name="access_token",
-    cookie_max_age=60 * 60 * 24,
+    cookie_max_age=ACCESS_TOKEN_LIFETIME_SECONDS,
     cookie_path="/",
-    cookie_secure=False,
+    cookie_secure=APP_ENV in {"production", "prod"},
     cookie_httponly=True,
-    cookie_samesite="none",
+    cookie_samesite="lax" if APP_ENV not in {"production", "prod"} else "none",
 )
 
 
+class SessionVersionJWTStrategy(JWTStrategy):
+    async def write_token(self, user: User) -> str:
+        return generate_jwt(
+            {"sub": str(user.id), "aud": self.token_audience, "ver": user.session_version},
+            self.encode_key,
+            self.lifetime_seconds,
+            algorithm=self.algorithm,
+        )
+
+    async def read_token(self, token, user_manager):
+        if token is None:
+            return None
+        try:
+            payload = decode_jwt(token, self.decode_key, self.token_audience, algorithms=[self.algorithm])
+            user_id = payload.get("sub")
+            if user_id is None:
+                return None
+            user = await user_manager.get(user_manager.parse_id(user_id))
+            if int(payload.get("ver", 0)) != user.session_version:
+                return None
+            return user
+        except (jwt.PyJWTError, exceptions.InvalidID, exceptions.UserNotExists, ValueError, TypeError):
+            return None
+
+
 def get_jwt_strategy() -> JWTStrategy:
-    return JWTStrategy(secret=SECRET, lifetime_seconds=3600)
+    return SessionVersionJWTStrategy(secret=SECRET, lifetime_seconds=ACCESS_TOKEN_LIFETIME_SECONDS)
 
 
 auth_backend = AuthenticationBackend(
@@ -184,9 +231,17 @@ current_active_user = fastapi_users.current_user(active=True)
 
 
 async def get_supervisor_or_admin(user: User = Depends(current_active_user)):
-    if not hasattr(user, "level") or user.level > 2:
+    if not getattr(user, "is_superuser", False) and getattr(user, "level", 99) > 2:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Acceso denegado. Se requiere nivel de Administrador o Supervisor.",
         )
     return user
+
+
+__all__ = ["get_supervisor_or_admin"]
+
+
+
+
+

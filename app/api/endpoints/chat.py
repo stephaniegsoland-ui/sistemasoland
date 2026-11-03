@@ -71,12 +71,13 @@ async def create_message(
     reference_url = payload.reference_url.strip() if payload.reference_url else None
 
     recipient = None
-    if payload.recipient_id is not None:
-        if payload.recipient_id == user.id:
+    recipient_id = payload.recipient_id
+    if recipient_id is not None:
+        if recipient_id == user.id:
             raise HTTPException(status_code=400, detail="No puedes enviarte un mensaje a ti mismo.")
-        recipient = await session.get(User, payload.recipient_id)
-        if recipient is None or not recipient.is_active:
-            raise HTTPException(status_code=404, detail="Usuario destinatario no encontrado.")
+        recipient = await session.get(User, recipient_id)
+        if recipient is not None and not recipient.is_active:
+            recipient = None
 
     existing_user = await session.get(User, user.id)
     if existing_user is None:
@@ -93,7 +94,7 @@ async def create_message(
     message = ChatMessage(
         content=content,
         sender_id=existing_user.id,
-        recipient_id=recipient.id if recipient else None,
+        recipient_id=recipient.id if recipient else recipient_id,
         message_type=message_type,
         reference_title=reference_title,
         reference_url=reference_url,
@@ -101,22 +102,27 @@ async def create_message(
     session.add(message)
     await session.flush()
 
-    targets: list[User] = []
+    targets: list[User] = [existing_user]
     if recipient is not None:
-        targets = [recipient]
-    else:
+        targets.append(recipient)
+    elif recipient_id is None:
         result = await session.execute(
             select(User).where(User.is_active.is_(True), User.id != existing_user.id)
         )
-        targets = result.scalars().all()
+        targets.extend(result.scalars().all())
 
+    seen_user_ids: set[uuid.UUID] = set()
     for target_user in targets:
+        if target_user.id in seen_user_ids:
+            continue
+        seen_user_ids.add(target_user.id)
+
         preview = content.strip()
         if len(preview) > 90:
             preview = preview[:87] + "..."
 
         notification = Notification(
-            user_id=str(target_user.id),
+            user_id=str(user.id if target_user.id == existing_user.id else target_user.id),
             title="Nuevo mensaje",
             message=f"{existing_user.username}: {preview}",
             type=message_type or "info",
@@ -126,7 +132,7 @@ async def create_message(
         await session.flush()
 
         broadcast_notification(
-            target_user.id,
+            user.id if target_user.id == existing_user.id else target_user.id,
             {
                 "id": str(notification.id),
                 "user_id": str(notification.user_id),

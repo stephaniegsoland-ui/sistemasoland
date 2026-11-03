@@ -48,7 +48,7 @@ async def list_notifications(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    q = select(Notification).where(Notification.user_id == user.id).order_by(Notification.created_at.desc())
+    q = select(Notification).where(Notification.user_id == str(user.id)).order_by(Notification.created_at.desc())
     result = await session.execute(q)
     return result.scalars().all()
 
@@ -59,7 +59,7 @@ async def create_notification(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    if notification_in.user_id != user.id:
+    if str(notification_in.user_id) != str(user.id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="No puedes crear notificaciones para otro usuario.")
 
     notification = Notification.model_validate(notification_in.model_dump())
@@ -77,7 +77,7 @@ async def update_notification(
     user: User = Depends(current_active_user),
 ):
     notification = await session.get(Notification, notification_id)
-    if not notification or notification.user_id != user.id:
+    if not notification or str(notification.user_id) != str(user.id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Notificación no encontrada.")
 
     update_data = notification_in.model_dump(exclude_unset=True)

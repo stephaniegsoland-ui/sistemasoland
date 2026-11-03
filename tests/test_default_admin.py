@@ -27,7 +27,7 @@ class DefaultAdminBootstrapTests(unittest.TestCase):
 
         with patch("app.core.auth.sessionmaker") as sessionmaker_mock, patch(
             "app.core.auth.PasswordHelper", return_value=mock_password_helper
-        ):
+        ), patch("app.core.auth.BOOTSTRAP_ADMIN", True):
             sessionmaker_mock.return_value.return_value.__aenter__.return_value = session
 
             asyncio.run(ensure_default_admin_user())

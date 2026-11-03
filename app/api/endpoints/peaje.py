@@ -6,10 +6,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, status
 
 from app.core.auth import current_active_user
+from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.models.user import User
 
-STATIC_PEAJES_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "peajes"
-STATIC_PEAJES_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_PEAJES_DIR = media_dir("peajes")
 
 router = APIRouter()
 
@@ -40,10 +40,14 @@ async def create_peaje(
         raise HTTPException(status_code=400, detail="Monto inválido")
 
     # save file
-    suffix = Path(file.filename or "file").suffix or ".jpg"
+    suffix = safe_filename_suffix(file.filename, ".jpg")
     filename = f"{uuid.uuid4().hex}{suffix}"
     dest = STATIC_PEAJES_DIR / filename
-    contents = await file.read()
+    contents = await read_upload(
+        file,
+        allowed_extensions={".png", ".jpg", ".jpeg", ".webp"},
+        allowed_content_types={"image/png", "image/jpeg", "image/webp"},
+    )
     dest.write_bytes(contents)
 
     # build response

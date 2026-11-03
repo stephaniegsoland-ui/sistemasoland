@@ -1,5 +1,6 @@
 import json
 import os
+import inspect
 from typing import Literal
 
 import httpx
@@ -296,8 +297,11 @@ async def _ask_deepseek(question: str, snapshot: dict | None = None) -> tuple[st
                     ],
                 },
             )
-            response.raise_for_status()
-            payload = response.json()
+            raise_for_status_result = response.raise_for_status()
+            if inspect.isawaitable(raise_for_status_result):
+                await raise_for_status_result
+            payload_result = response.json()
+            payload = await payload_result if inspect.isawaitable(payload_result) else payload_result
             answer = payload["choices"][0]["message"]["content"]
             return answer.strip() if answer and answer.strip() else None, "deepseek"
     except Exception:
@@ -317,7 +321,7 @@ async def ask_assistant(
     snapshot = await _get_system_snapshot(session)
     factual_keywords = (
         "cuánto", "cuanto", "cuántos", "cuantos", "pendiente", "existencia", "inventario",
-        "stock", "retención", "retencion", "usuarios", "personal activo", "procura", "compras",
+        "retención", "retencion", "usuarios", "personal activo", "procura", "compras",
         "timesheet", "hoja de tiempo", "inspección", "inspeccion", "ambiente", "mensajes",
     )
     if any(keyword in question.lower() for keyword in factual_keywords):

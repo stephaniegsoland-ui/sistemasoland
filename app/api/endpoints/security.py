@@ -13,6 +13,7 @@ from sqlalchemy import Column, Text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_active_user
+from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.core.db import get_async_session
 from app.core.vision import classify_image_bytes, get_best_embedding
 from app.models.user import User
@@ -27,8 +28,7 @@ try:
 except Exception:
     face_recognition = None
 
-STATIC_SECURITY_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "security"
-STATIC_SECURITY_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_SECURITY_DIR = media_dir("security")
 
 router = APIRouter()
 
@@ -582,7 +582,11 @@ async def analyze_epp_image(
     user: User = Depends(current_active_user),
 ):
     try:
-        file_bytes = await file.read()
+        file_bytes = await read_upload(
+            file,
+            allowed_extensions={".png", ".jpg", ".jpeg", ".webp", ".bmp"},
+            allowed_content_types={"image/png", "image/jpeg", "image/webp", "image/bmp"},
+        )
         image = Image.open(io.BytesIO(file_bytes))
         image.verify()
     except Exception as exc:
@@ -590,7 +594,7 @@ async def analyze_epp_image(
 
     recognized_username, recognition_precision = await recognize_user_by_image(file_bytes, session)
     analysis = analyze_image(file_bytes)
-    image_name = f"{uuid.uuid4().hex}_{file.filename}"
+    image_name = f"{uuid.uuid4().hex}{safe_filename_suffix(file.filename, '.jpg')}"
     target_path = STATIC_SECURITY_DIR / image_name
     target_path.write_bytes(file_bytes)
     thumbnail_name = f"{uuid.uuid4().hex}_thumb.jpg"

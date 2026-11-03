@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from PIL import Image, ImageEnhance, ImageOps
 
 from app.core.auth import current_active_user
+from app.core.storage import media_dir, read_upload
 from app.core.db import get_async_session
 from app.models.user import User
 
@@ -22,6 +23,11 @@ try:
     from pypdf import PdfReader
 except Exception:
     PdfReader = None
+
+try:
+    import pymupdf
+except Exception:
+    pymupdf = None
 
 try:
     if not hasattr(pkgutil, "find_loader"):
@@ -44,7 +50,7 @@ except Exception:
     cv2 = None
     np = None
 
-PERMIT_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "security" / "permits"
+PERMIT_DIR = media_dir("security", "permits")
 PERMIT_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter()
@@ -130,16 +136,28 @@ RISK_RULES = [
 ]
 
 
-def extract_text(filename: str, content: bytes) -> str:
+def extract_text(filename: str, content: bytes, preferred_ocr_language: str = "auto") -> str:
     suffix = Path(filename).suffix.lower()
     if suffix == ".pdf":
-        if PdfReader is None:
-            return ""
-        try:
-            reader = PdfReader(io.BytesIO(content))
-            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
-        except Exception:
-            return ""
+        if PdfReader is not None:
+            try:
+                reader = PdfReader(io.BytesIO(content))
+                text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+                if text:
+                    return text
+            except Exception:
+                pass
+        if pymupdf is not None:
+            try:
+                pdf = pymupdf.open(stream=content, filetype="pdf")
+                page_texts = []
+                for page in pdf:
+                    image_bytes = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).tobytes("png")
+                    page_texts.append(extract_text("scanned-page.png", image_bytes, preferred_ocr_language))
+                return "\n".join(text for text in page_texts if text).strip()
+            except Exception:
+                return ""
+        return ""
     if suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}:
         if pytesseract is None:
             return ""
@@ -148,11 +166,14 @@ def extract_text(filename: str, content: bytes) -> str:
             scale = max(1, min(3, 2200 // max(image.width, 1)))
             if scale > 1:
                 image = image.resize((image.width * scale, image.height * scale))
-            languages = set(pytesseract.get_languages(config=""))
-            tessdata_dir = Path(__file__).resolve().parent.parent.parent / "static" / "security" / "tessdata"
+            tessdata_dir = media_dir("security", "tessdata")
             spanish_model = tessdata_dir / "spa.traineddata"
             tessdata_arg = f"--tessdata-dir {tessdata_dir.as_posix()}" if spanish_model.exists() else ""
-            ocr_language = "spa" if spanish_model.exists() else "eng" if "eng" in languages else "osd"
+            languages = set(pytesseract.get_languages(config=tessdata_arg))
+            if preferred_ocr_language in {"spa", "eng"} and preferred_ocr_language in languages:
+                ocr_language = preferred_ocr_language
+            else:
+                ocr_language = "spa" if "spa" in languages else "eng" if "eng" in languages else "osd"
             variants = [image, ImageEnhance.Contrast(image).enhance(2.2)]
             variants.append(image.point(lambda pixel: 0 if pixel < 180 else 255))
             if cv2 is not None and np is not None:
@@ -264,37 +285,60 @@ def extract_permit_date(text: str) -> Optional[str]:
 
 
 def extract_permit_time(text: str) -> Optional[str]:
+    def normalize_compact_value(raw: str, meridiem: Optional[str] = None) -> Optional[str]:
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) == 3:
+            hour = digits[0]
+            minute = digits[1:]
+            if int(hour) <= 2:
+                value = f"{int(digits[:2]):02d}:{int(digits[2]):02d}"
+            else:
+                value = f"0{int(hour):d}:{int(minute):02d}"
+            if meridiem:
+                return f"{value} {meridiem.upper()}M"
+            return value
+        if len(digits) >= 4:
+            compact = re.search(r"(?<!\d)([01]?\d|2[0-3])([0-5]\d?)(?!\d)", digits)
+            if compact:
+                hour, minutes = compact.groups()
+                value = f"{int(hour):02d}:{int(minutes):02d}"
+                if meridiem:
+                    return f"{value} {meridiem.upper()}M"
+                return value
+        return None
+
     labeled = field_from_text(text, ["hora del permiso", "hora"])
     if labeled:
-        compact_digits = re.sub(r"\D", "", labeled)
-        if len(compact_digits) == 3:
-            if compact_digits.startswith("0"):
-                return f"{int(compact_digits[:2]):02d}:00"
-            return f"{int(compact_digits[0]):02d}:{compact_digits[1:]}"
+        meridiem = re.search(r"\b([ap])\.?\s*m\.?\b", labeled, re.IGNORECASE)
+        meridiem_text = meridiem.group(1).upper() if meridiem else None
+        compact_value = normalize_compact_value(labeled, meridiem_text)
+        if compact_value:
+            return compact_value
         match = re.search(r"(?:[01]?\d|2[0-3])[:.]\d{2}(?:\s?[ap]\.?m\.?)?", labeled, re.IGNORECASE)
         if match:
-            return match.group(0)
+            value = match.group(0).strip()
+            if re.search(r"\b[ap]\.?m\.?\b", value, re.IGNORECASE):
+                return value
+            return value if not meridiem_text else f"{value} {meridiem_text}M"
         compact = re.search(r"(?<!\d)([01]?\d|2[0-3])([0-5]\d?)(?!\d)", re.sub(r"\D", "", labeled))
         if compact:
             hour, minutes = compact.groups()
-            meridiem = re.search(r"\b([ap])\.?\s*m\.?\b", labeled, re.IGNORECASE)
-            suffix = f" {meridiem.group(1).upper()}M" if meridiem else ""
-            return f"{int(hour):02d}:{int(minutes):02d}{suffix}"
+            value = f"{int(hour):02d}:{int(minutes):02d}"
+            if meridiem_text:
+                value = f"{value} {meridiem_text}M"
+            return value
     match = re.search(r"\b(?:a las?\s*)?((?:[01]?\d|2[0-3])\s*[:.]?\s*\d{2}(?:\s?[ap]\.?m\.?)?)\b", text, re.IGNORECASE)
     if not match:
-        compact_digits = re.sub(r"\D", "", text)
-        if len(compact_digits) == 3:
-            if compact_digits.startswith("0"):
-                return f"{int(compact_digits[:2]):02d}:00"
-            return f"{int(compact_digits[0]):02d}:{compact_digits[1:]}"
-        compact = re.search(r"(?<!\d)([01]?\d)([0-5]\d?)(?!\d)", re.sub(r"\D", "", text))
-        if not compact:
-            return None
-        hour, minutes = compact.groups()
         meridiem = re.search(r"\b([ap])\.?\s*m\.?\b", text, re.IGNORECASE)
-        suffix = f" {meridiem.group(1).upper()}M" if meridiem else ""
-        return f"{int(hour):02d}:{int(minutes):02d}{suffix}"
-    value = re.sub(r"\s*[:.]\s*|\s+", ":", match.group(1).strip())
+        meridiem_text = meridiem.group(1).upper() if meridiem else None
+        compact_value = normalize_compact_value(text, meridiem_text)
+        if compact_value:
+            return compact_value
+        return None
+    value = match.group(1).strip()
+    if re.search(r"\b[ap]\.?m\.?\b", value, re.IGNORECASE):
+        return re.sub(r"\s*[:.]\s*|\s+", ":", value).replace("AM", " AM").replace("PM", " PM")
+    value = re.sub(r"\s*[:.]\s*|\s+", ":", value)
     return value
 
 
@@ -451,11 +495,10 @@ async def analyze_safety_permit(
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_active_user),
 ):
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo del permiso está vacío.")
-    if len(content) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="El permiso no puede superar 15 MB.")
+    content = await read_upload(
+        file,
+        allowed_extensions={".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt"},
+    )
 
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "permiso")
     stored_name = f"{uuid.uuid4().hex}_{safe_name}"
@@ -510,11 +553,10 @@ async def analyze_safety_document(
     if document_type not in {"art", "vit"}:
         raise HTTPException(status_code=400, detail="El tipo de documento debe ser ART o VIT.")
 
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
-    if len(content) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="El archivo no puede superar 15 MB.")
+    content = await read_upload(
+        file,
+        allowed_extensions={".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt"},
+    )
 
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or document_type)
     stored_name = f"{uuid.uuid4().hex}_{safe_name}"

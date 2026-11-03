@@ -12,6 +12,7 @@ from fastapi import Depends
 from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.models.user import User
+from app.core.storage import media_dir
 
 
 def resolve_database_url(raw_url: str | None = None) -> str:
@@ -19,7 +20,11 @@ def resolve_database_url(raw_url: str | None = None) -> str:
     if not configured_url:
         raise ValueError("DB_URL is not configured")
 
-    use_sqlite_fallback = os.getenv("USE_SQLITE_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}
+    parsed = urlparse(configured_url)
+    local_host = parsed.hostname in {"localhost", "127.0.0.1", "::1", None}
+    environment = os.getenv("APP_ENV", "development").lower()
+    default_sqlite_fallback = "true" if local_host and environment not in {"production", "prod"} else "false"
+    use_sqlite_fallback = os.getenv("USE_SQLITE_FALLBACK", default_sqlite_fallback).lower() in {"1", "true", "yes", "on"}
     if use_sqlite_fallback:
         sqlite_path = Path(__file__).resolve().parent.parent / "soland.db"
         return f"sqlite+aiosqlite:///{sqlite_path.as_posix()}"
@@ -39,8 +44,7 @@ def resolve_database_url(raw_url: str | None = None) -> str:
         normalized = urlunparse(parsed)
     return normalized
 
-STATIC_USERS_DIR = Path(__file__).resolve().parent.parent / "static" / "users"
-STATIC_USERS_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_USERS_DIR = media_dir("users")
 
 load_dotenv()
 
@@ -140,11 +144,40 @@ async def create_db_and_tables():
                     "photo_path": "VARCHAR(255)",
                     "permissions": "JSON",
                     "avatar_config": "JSON",
+                    "settings": "JSON",
+                    "mfa_secret_encrypted": "VARCHAR(255) NULL",
+                    "mfa_pending_secret_encrypted": "VARCHAR(255) NULL",
+                    "mfa_recovery_codes": "JSON NULL",
+                    "mfa_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+                    "session_version": "INTEGER NOT NULL DEFAULT 0",
+                    "last_login_at": "DATETIME NULL",
                 }
                 for column, column_type in sqlite_user_columns.items():
                     if column not in existing_user_columns:
                         await conn.exec_driver_sql(
                             f'ALTER TABLE "user" ADD COLUMN "{column}" {column_type}'
+                        )
+                result = await conn.execute(text('PRAGMA table_info("scanned_documents")'))
+                existing_document_columns = {row[1] for row in result.fetchall()}
+                sqlite_document_columns = {
+                    "document_type": "VARCHAR(255) NULL",
+                    "information": "TEXT NULL",
+                }
+                for column, column_type in sqlite_document_columns.items():
+                    if column not in existing_document_columns:
+                        await conn.exec_driver_sql(
+                            f'ALTER TABLE "scanned_documents" ADD COLUMN "{column}" {column_type}'
+                        )
+                result = await conn.execute(text('PRAGMA table_info("system_settings")'))
+                existing_settings_columns = {row[1] for row in result.fetchall()}
+                sqlite_settings_columns = {
+                    "ocr_language": "VARCHAR(8) NOT NULL DEFAULT 'auto'",
+                    "max_document_upload_mb": "INTEGER NOT NULL DEFAULT 15",
+                }
+                for column, column_type in sqlite_settings_columns.items():
+                    if column not in existing_settings_columns:
+                        await conn.exec_driver_sql(
+                            f'ALTER TABLE "system_settings" ADD COLUMN "{column}" {column_type}'
                         )
                 return
 
@@ -219,6 +252,13 @@ async def create_db_and_tables():
                     "photo_path": "VARCHAR(255) NULL",
                     "permissions": "JSON NULL",
                     "avatar_config": "JSON NULL",
+                    "settings": "JSON NULL",
+                    "mfa_secret_encrypted": "VARCHAR(255) NULL",
+                    "mfa_pending_secret_encrypted": "VARCHAR(255) NULL",
+                    "mfa_recovery_codes": "JSON NULL",
+                    "mfa_enabled": "TINYINT(1) NOT NULL DEFAULT 0",
+                    "session_version": "INT NOT NULL DEFAULT 0",
+                    "last_login_at": "DATETIME NULL",
                 },
                 "vehicle_inspection": {
                     "report": "TEXT NOT NULL",
@@ -237,6 +277,14 @@ async def create_db_and_tables():
                 },
                 "safety_permit": {
                     "extracted_text": "TEXT NOT NULL",
+                },
+                "scanned_documents": {
+                    "document_type": "VARCHAR(255) NULL",
+                    "information": "TEXT NULL",
+                },
+                "system_settings": {
+                    "ocr_language": "VARCHAR(8) NOT NULL DEFAULT 'auto'",
+                    "max_document_upload_mb": "INT NOT NULL DEFAULT 15",
                 },
                 "chat_message": {
                     "recipient_id": "CHAR(32) NULL",
@@ -325,5 +373,5 @@ async def create_db_and_tables():
                 except Exception:
                     pass
     except Exception as exc:
-        print(f"Database initialization skipped: {exc}")
+        raise RuntimeError("Database initialization failed") from exc
 

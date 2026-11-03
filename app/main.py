@@ -1,5 +1,6 @@
 import os
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,17 +9,19 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.db import create_db_and_tables, engine, repair_legacy_user_photos
 from app.core.auth import auth_backend, ensure_default_admin_user, fastapi_users
+from app.core.storage import MEDIA_ROOT
+from app.core.document_reminders import document_expiry_reminder_loop
 from app.schemas.user import UserRead, UserCreate, UserUpdate
 from app.api.endpoints import (
     categories, inventary, notifications, type_record, vehicle, procura, timesheet,
-    chat, users, security, peaje, safety_permits, companies, environment,
-    admin_overview, assistant, debug_photos,
+    chat, users, security, peaje, safety_permits, companies, environment, documents,
+    admin_overview, assistant, debug_photos, settings, login,
 )
 
 
 def sync_inspection_static_dirs() -> None:
     app_dir = Path(__file__).resolve().parent
-    target_dir = app_dir / "static" / "inspections"
+    target_dir = MEDIA_ROOT / "inspections"
     old_dir = app_dir / "api" / "static" / "inspections"
     if not target_dir.exists():
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -37,8 +40,14 @@ async def lifespan(app: FastAPI):
     await create_db_and_tables()
     await ensure_default_admin_user()
     await repair_legacy_user_photos()
-    yield
-    await engine.dispose()
+    reminder_task = asyncio.create_task(document_expiry_reminder_loop())
+    try:
+        yield
+    finally:
+        reminder_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reminder_task
+        await engine.dispose()
 
 
 def get_allowed_origins() -> list[str]:
@@ -50,11 +59,11 @@ def get_allowed_origins() -> list[str]:
         "https://soland.com",
         "https://api.soland.com",
         "https://sistemasoland.onrender.com",
-        "https://*.vercel.app",
-        "https://*.soland.com",
     ]
     env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
     if not env_origins:
+        if os.getenv("APP_ENV", "development").lower() in {"production", "prod"}:
+            raise RuntimeError("CORS_ALLOWED_ORIGINS must be configured in production")
         return list(dict.fromkeys(default_origins))
 
     parsed_origins = [
@@ -62,7 +71,7 @@ def get_allowed_origins() -> list[str]:
         for origin in env_origins.split(",")
         if origin.strip()
     ]
-    return list(dict.fromkeys(default_origins + parsed_origins))
+    return list(dict.fromkeys(parsed_origins))
 
 
 app = FastAPI(
@@ -70,6 +79,10 @@ app = FastAPI(
     description="Backend para gestion de EPP e IA",
     lifespan=lifespan,
 )
+
+@app.get("/health", tags=["Sistema"])
+async def health_check():
+    return {"status": "ok"}
 
 # Middleware Settings
 app.add_middleware(
@@ -81,6 +94,8 @@ app.add_middleware(
 )
 
 # Auth Settings
+app.include_router(login.router, prefix="/api/auth", tags=["Autenticación"])
+
 app.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/api/auth",
@@ -105,7 +120,7 @@ app.include_router(
 
 app.mount(
     "/static",
-    StaticFiles(directory=Path(__file__).resolve().parent / "static"),
+    StaticFiles(directory=MEDIA_ROOT),
     name="static",
 )
 
@@ -134,9 +149,8 @@ app.include_router(
     safety_permits.router, prefix="/api/security", tags=["Permisos y Riesgos"]
 )
 
-app.include_router(
-    debug_photos.router, prefix="/api/debug", tags=["Debug"]
-)
+if os.getenv("APP_ENV", "development").lower() not in {"production", "prod"}:
+    app.include_router(debug_photos.router, prefix="/api/debug", tags=["Debug"])
 
 app.include_router(
     procura.router, prefix="/api/procura", tags=["Gestión de Procura"]
@@ -166,6 +180,14 @@ app.include_router(
 
 app.include_router(
     environment.router, prefix="/api/environment", tags=["Departamento Ambiental"]
+)
+
+app.include_router(
+    documents.router, prefix="/api/documents", tags=["Gestión Documental"]
+)
+
+app.include_router(
+    settings.router, prefix="/api/settings", tags=["Configuración"]
 )
 
 # Peaje endpoint for vehicle toll submissions (used by frontend /dashboard/vehiculos/peaje)
