@@ -1,13 +1,17 @@
+import asyncio
 import os
+import smtplib
 import uuid
 import logging
 import jwt
+from email.message import EmailMessage
 from typing import Optional
 from fastapi import Depends, Request, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import select
+from urllib.parse import urlencode, urlsplit
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.password import PasswordHelper
 from fastapi_users.jwt import decode_jwt, generate_jwt
@@ -98,7 +102,95 @@ async def ensure_default_admin_user() -> None:
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = SECRET
+    reset_password_token_lifetime_seconds = 1800
     verification_token_secret = SECRET
+
+    async def validate_password(self, password: str, user: User) -> None:
+        if not 8 <= len(password) <= 128:
+            raise exceptions.InvalidPasswordException(
+                "La contraseña debe tener entre 8 y 128 caracteres."
+            )
+        await super().validate_password(password, user)
+
+    async def on_after_forgot_password(
+        self, user: User, token: str, request: Optional[Request] = None
+    ) -> None:
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
+        parsed_frontend_url = urlsplit(frontend_url)
+        if not parsed_frontend_url.scheme or not parsed_frontend_url.netloc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            )
+        if APP_ENV in {"production", "prod"} and parsed_frontend_url.scheme != "https":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            )
+
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_port_value = os.getenv("SMTP_PORT", "587")
+        smtp_username = os.getenv("SMTP_USERNAME")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        sender = os.getenv("SMTP_FROM_EMAIL")
+        if not all((smtp_host, smtp_username, smtp_password, sender)):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            )
+
+        try:
+            smtp_port = int(smtp_port_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            ) from exc
+        if not 1 <= smtp_port <= 65535:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            )
+
+        reset_url = (
+            f"{frontend_url}/reset-password?"
+            f"{urlencode({'token': token})}"
+        )
+        message = EmailMessage()
+        message["Subject"] = "Restablece tu contraseña de Soland"
+        message["From"] = sender
+        message["To"] = user.email
+        message.set_content(
+            "Recibimos una solicitud para cambiar la contraseña de tu cuenta de Soland.\n\n"
+            f"Abre este enlace para elegir una contraseña nueva (válido por 30 minutos):\n{reset_url}\n\n"
+            "Si no solicitaste este cambio, puedes ignorar este mensaje."
+        )
+
+        use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+        use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+
+        def send_email() -> None:
+            smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+            with smtp_class(smtp_host, smtp_port, timeout=15) as server:
+                if use_tls and not use_ssl:
+                    server.starttls()
+                server.login(smtp_username, smtp_password)
+                server.send_message(message)
+
+        try:
+            await asyncio.to_thread(send_email)
+        except (OSError, smtplib.SMTPException, ValueError) as exc:
+            logger.exception("Password reset email delivery failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No fue posible enviar el correo de recuperación.",
+            ) from exc
+
+    async def on_after_reset_password(
+        self, user: User, request: Optional[Request] = None
+    ) -> None:
+        user.session_version += 1
+        await self.user_db.update(user, {"session_version": user.session_version})
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
         # Save photo_data to disk (if provided) and update user's photo_path
@@ -240,8 +332,6 @@ async def get_supervisor_or_admin(user: User = Depends(current_active_user)):
 
 
 __all__ = ["get_supervisor_or_admin"]
-
-
 
 
 

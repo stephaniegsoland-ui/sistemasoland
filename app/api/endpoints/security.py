@@ -1,10 +1,15 @@
 import base64
 import hashlib
+import logging
+import os
+import re
+import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from PIL import Image
 from pydantic import BaseModel
@@ -29,6 +34,7 @@ except Exception:
     face_recognition = None
 
 STATIC_SECURITY_DIR = media_dir("security")
+logger = logging.getLogger("soland.security.epp")
 
 router = APIRouter()
 
@@ -73,6 +79,7 @@ class SecurityEppReportRead(BaseModel):
 
 class SecurityEppAnalysisResult(BaseModel):
     person_detected: bool
+    face_detected: bool = False
     person_bbox: Optional[List[int]] = None
     detected_items: Dict[str, bool]
     present_items: List[str]
@@ -83,6 +90,256 @@ class SecurityEppAnalysisResult(BaseModel):
     full_body_detected: bool = True
     recognized_username: Optional[str] = None
     recognition_precision: Optional[float] = None
+
+
+EPP_CLASS_ALIASES = {
+    "person": {"person", "human", "worker", "persona"},
+    "full_body_person": {
+        "full body person",
+        "full body worker",
+        "full body",
+        "persona cuerpo completo",
+        "persona de cuerpo completo",
+        "cuerpo completo",
+    },
+    "face": {"face", "human face", "rostro", "cara"},
+    "cascos": {"helmet", "hard hat", "hardhat", "safety helmet", "casco", "cascos"},
+    "chaleco": {"safety vest", "reflective vest", "hi vis vest", "vest", "chaleco"},
+    "guantes": {"gloves", "glove", "safety gloves", "guante", "guantes"},
+    "lentes de seguridad": {
+        "safety glasses",
+        "protective glasses",
+        "goggles",
+        "lentes",
+        "lentes de seguridad",
+    },
+    "tapones de oído": {
+        "ear plugs",
+        "earplugs",
+        "ear protection",
+        "hearing protection",
+        "tapones de oido",
+        "tapones de oído",
+    },
+    "braga de seguridad": {
+        "coveralls",
+        "coverall",
+        "overalls",
+        "safety coveralls",
+        "braga de seguridad",
+        "braga",
+    },
+    "botas": {"safety boots", "work boots", "boots", "boot", "botas", "bota"},
+}
+REQUIRED_EPP_CLASSES = (
+    "cascos",
+    "chaleco",
+    "guantes",
+    "lentes de seguridad",
+    "tapones de oído",
+    "braga de seguridad",
+    "botas",
+)
+
+
+def _normalize_model_class(label: str) -> str:
+    normalized = unicodedata.normalize("NFKD", label.strip().lower())
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", without_accents).strip()
+
+
+_NORMALIZED_EPP_ALIASES = {
+    _normalize_model_class(alias): class_name
+    for class_name, aliases in EPP_CLASS_ALIASES.items()
+    for alias in aliases
+}
+
+
+def parse_roboflow_predictions(
+    payload: Dict[str, object],
+    image_width: int,
+    image_height: int,
+    confidence_threshold: float,
+) -> SecurityEppAnalysisResult:
+    raw_predictions = payload.get("predictions")
+    if not isinstance(raw_predictions, list):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="El modelo de EPP devolvió una respuesta inválida.",
+        )
+
+    predictions: List[Dict[str, object]] = []
+    for raw_prediction in raw_predictions:
+        if not isinstance(raw_prediction, dict):
+            continue
+        label = raw_prediction.get("class")
+        if not isinstance(label, str):
+            continue
+        try:
+            confidence = float(raw_prediction.get("confidence", 0))
+            center_x = float(raw_prediction["x"])
+            center_y = float(raw_prediction["y"])
+            width = float(raw_prediction["width"])
+            height = float(raw_prediction["height"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if confidence < confidence_threshold or width <= 0 or height <= 0:
+            continue
+
+        x1 = max(0.0, center_x - width / 2)
+        y1 = max(0.0, center_y - height / 2)
+        x2 = min(float(image_width), center_x + width / 2)
+        y2 = min(float(image_height), center_y + height / 2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        normalized_label = _normalize_model_class(label)
+        class_name = _NORMALIZED_EPP_ALIASES.get(normalized_label)
+        if class_name:
+            predictions.append({
+                "class": class_name,
+                "confidence": confidence,
+                "bbox": (x1, y1, x2, y2),
+            })
+
+    people = [prediction for prediction in predictions if prediction["class"] == "person"]
+    full_body_people = [
+        prediction for prediction in predictions
+        if prediction["class"] == "full_body_person"
+    ]
+    if len(people) != 1 or len(full_body_people) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se pudo confirmar una sola persona con el cuerpo completo. Toma una foto clara, de frente y de cuerpo completo.",
+        )
+
+    person_box = people[0]["bbox"]
+    full_body_box = full_body_people[0]["bbox"]
+    if not (
+        full_body_box[0] <= person_box[0]
+        and full_body_box[1] <= person_box[1]
+        and full_body_box[2] >= person_box[2]
+        and full_body_box[3] >= person_box[3]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El modelo no pudo confirmar que el cuerpo completo esté visible. Toma otra foto.",
+        )
+
+    faces = [prediction for prediction in predictions if prediction["class"] == "face"]
+    face_in_person = any(
+        person_box[0] <= (face["bbox"][0] + face["bbox"][2]) / 2 <= person_box[2]
+        and person_box[1] <= (face["bbox"][1] + face["bbox"][3]) / 2 <= person_box[3]
+        for face in faces
+    )
+    if not face_in_person:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No se detectó claramente el rostro de la persona. Toma una foto de frente y bien iluminada.",
+        )
+
+    detected_items = {item: False for item in REQUIRED_EPP_CLASSES}
+    for prediction in predictions:
+        class_name = prediction["class"]
+        if class_name not in detected_items:
+            continue
+        item_box = prediction["bbox"]
+        item_center_x = (item_box[0] + item_box[2]) / 2
+        item_center_y = (item_box[1] + item_box[3]) / 2
+        if (
+            person_box[0] <= item_center_x <= person_box[2]
+            and person_box[1] <= item_center_y <= person_box[3]
+        ):
+            detected_items[class_name] = True
+
+    present_items = [item for item in REQUIRED_EPP_CLASSES if detected_items[item]]
+    missing_items = [item for item in REQUIRED_EPP_CLASSES if not detected_items[item]]
+    score = round(100 * len(present_items) / len(REQUIRED_EPP_CLASSES), 1)
+    recommendations = [
+        f"Usar {item} antes de ingresar."
+        for item in missing_items
+    ]
+    summary = (
+        "Se detectó una persona con cuerpo completo y rostro visible. "
+        + (
+            f"Faltan EPP: {', '.join(missing_items)}."
+            if missing_items
+            else "Se detectaron todos los EPP requeridos."
+        )
+    )
+
+    return SecurityEppAnalysisResult(
+        person_detected=True,
+        face_detected=True,
+        person_bbox=[round(value) for value in person_box],
+        detected_items=detected_items,
+        present_items=present_items,
+        missing_items=missing_items,
+        score=score,
+        summary=summary,
+        recommendations=recommendations,
+        full_body_detected=True,
+    )
+
+
+async def analyze_with_roboflow(file_bytes: bytes, image_width: int, image_height: int) -> SecurityEppAnalysisResult:
+    api_key = os.getenv("ROBOFLOW_API_KEY")
+    model_id = os.getenv("ROBOFLOW_MODEL_ID", "").strip()
+    if not api_key or not model_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El detector Roboflow aún no está configurado. Configura ROBOFLOW_API_KEY y ROBOFLOW_MODEL_ID.",
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", model_id):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ROBOFLOW_MODEL_ID debe tener el formato proyecto/version.",
+        )
+
+    try:
+        confidence_threshold = float(os.getenv("ROBOFLOW_CONFIDENCE_THRESHOLD", "0.5"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ROBOFLOW_CONFIDENCE_THRESHOLD debe ser un valor entre 0 y 1.",
+        ) from exc
+    if not 0 <= confidence_threshold <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ROBOFLOW_CONFIDENCE_THRESHOLD debe ser un valor entre 0 y 1.",
+        )
+
+    image_base64 = base64.b64encode(file_bytes).decode("ascii")
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                f"https://serverless.roboflow.com/{model_id}",
+                content=image_base64,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.exception("Roboflow EPP inference failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="No se pudo completar el análisis con el modelo Roboflow.",
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="El modelo Roboflow devolvió una respuesta inválida.",
+        )
+    return parse_roboflow_predictions(
+        payload,
+        image_width,
+        image_height,
+        confidence_threshold,
+    )
 
 
 def decode_photo_data(photo_data: str) -> bytes:
@@ -588,12 +845,12 @@ async def analyze_epp_image(
             allowed_content_types={"image/png", "image/jpeg", "image/webp", "image/bmp"},
         )
         image = Image.open(io.BytesIO(file_bytes))
+        image_width, image_height = image.size
         image.verify()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Archivo de imagen no válido.") from exc
 
-    recognized_username, recognition_precision = await recognize_user_by_image(file_bytes, session)
-    analysis = analyze_image(file_bytes)
+    analysis = await analyze_with_roboflow(file_bytes, image_width, image_height)
     image_name = f"{uuid.uuid4().hex}{safe_filename_suffix(file.filename, '.jpg')}"
     target_path = STATIC_SECURITY_DIR / image_name
     target_path.write_bytes(file_bytes)
@@ -606,19 +863,9 @@ async def analyze_epp_image(
     except Exception:
         thumbnail_path = None
 
-    effective_operator_name = recognized_username or operator_name
-    analysis.recognized_username = recognized_username
-    analysis.recognition_precision = recognition_precision
-    analysis.summary = build_analysis_summary(
-        analysis,
-        recognized_username,
-        recognition_precision,
-        operator_name,
-    )
-
     report = SecurityEppReport(
         user_id=user.id,
-        operator_name=effective_operator_name,
+        operator_name=operator_name,
         turno=turno,
         notes=notes,
         image_path=f"/static/security/{image_name}",

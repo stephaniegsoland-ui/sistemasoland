@@ -109,6 +109,12 @@ app.include_router(
 )
 
 app.include_router(
+    fastapi_users.get_reset_password_router(),
+    prefix="/api/auth",
+    tags=["Autenticacion"],
+)
+
+app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/api/users",
     tags=["Gestion de Usuarios"],

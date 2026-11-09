@@ -152,7 +152,7 @@ async def update_procura(
     notification = None
     if status_changed and procura.requester_id is not None:
         notification = Notification(
-            user_id=procura.requester_id,
+            user_id=str(procura.requester_id),
             title="Actualización de Procura",
             message=(
                 f"El estado de tu procura "
