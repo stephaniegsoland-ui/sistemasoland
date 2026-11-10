@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -155,14 +156,34 @@ _NORMALIZED_EPP_ALIASES = {
 }
 
 
+def _extract_roboflow_predictions(payload: object) -> Optional[List[object]]:
+    if isinstance(payload, dict):
+        predictions = payload.get("predictions")
+        if isinstance(predictions, list):
+            return predictions
+        if isinstance(predictions, dict):
+            nested_predictions = predictions.get("predictions")
+            if isinstance(nested_predictions, list):
+                return nested_predictions
+        outputs = payload.get("outputs")
+        if isinstance(outputs, (dict, list)):
+            return _extract_roboflow_predictions(outputs)
+    elif isinstance(payload, list):
+        for output in payload:
+            predictions = _extract_roboflow_predictions(output)
+            if predictions is not None:
+                return predictions
+    return None
+
+
 def parse_roboflow_predictions(
-    payload: Dict[str, object],
+    payload: object,
     image_width: int,
     image_height: int,
     confidence_threshold: float,
 ) -> SecurityEppAnalysisResult:
-    raw_predictions = payload.get("predictions")
-    if not isinstance(raw_predictions, list):
+    raw_predictions = _extract_roboflow_predictions(payload)
+    if raw_predictions is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="El modelo de EPP devolvió una respuesta inválida.",
@@ -284,6 +305,74 @@ def parse_roboflow_predictions(
 
 async def analyze_with_roboflow(file_bytes: bytes, image_width: int, image_height: int) -> SecurityEppAnalysisResult:
     api_key = os.getenv("ROBOFLOW_API_KEY")
+    workflow_url = os.getenv("ROBOFLOW_WORKFLOW_URL", "").strip()
+    if workflow_url:
+        parsed_url = urlsplit(workflow_url)
+        if (
+            parsed_url.scheme != "https"
+            or parsed_url.netloc != "serverless.roboflow.com"
+            or not re.fullmatch(
+                r"/(?:infer/)?[A-Za-z0-9_.-]+/workflows/[A-Za-z0-9_.-]+",
+                parsed_url.path,
+            )
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ROBOFLOW_WORKFLOW_URL debe ser una URL Cloud API válida de Roboflow Workflows.",
+            )
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Configura ROBOFLOW_API_KEY en el entorno del backend.",
+            )
+        try:
+            confidence_threshold = float(os.getenv("ROBOFLOW_CONFIDENCE_THRESHOLD", "0.5"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ROBOFLOW_CONFIDENCE_THRESHOLD debe ser un valor entre 0 y 1.",
+            ) from exc
+        if not 0 <= confidence_threshold <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="ROBOFLOW_CONFIDENCE_THRESHOLD debe ser un valor entre 0 y 1.",
+            )
+
+        image_base64 = base64.b64encode(file_bytes).decode("ascii")
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(
+                    workflow_url,
+                    json={
+                        "inputs": {
+                            "image": {"type": "base64", "value": image_base64},
+                        },
+                    },
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.exception("Roboflow EPP workflow inference failed")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="No se pudo completar el análisis con el Workflow de Roboflow.",
+            ) from exc
+
+        if not isinstance(payload, (dict, list)):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="El Workflow de Roboflow devolvió una respuesta inválida.",
+            )
+        return parse_roboflow_predictions(
+            payload,
+            image_width,
+            image_height,
+            confidence_threshold,
+        )
+
     model_id = os.getenv("ROBOFLOW_MODEL_ID", "").strip()
     if not api_key or not model_id:
         raise HTTPException(

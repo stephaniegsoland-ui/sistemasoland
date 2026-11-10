@@ -62,6 +62,32 @@ def test_build_analysis_summary_mentions_identified_operator():
 
 
 class RoboflowEppAnalysisTests(unittest.TestCase):
+    def test_parses_workflow_output_wrapped_in_outputs(self):
+        predictions = [
+            {"class": "person", "confidence": 0.99, "x": 100, "y": 100, "width": 80, "height": 180},
+            {"class": "full body person", "confidence": 0.98, "x": 100, "y": 100, "width": 80, "height": 180},
+            {"class": "face", "confidence": 0.97, "x": 100, "y": 35, "width": 25, "height": 25},
+        ]
+        workflow_response = [
+            {
+                "predictions": {
+                    "image": {"width": 300, "height": 220},
+                    "predictions": predictions,
+                },
+            },
+        ]
+
+        result = parse_roboflow_predictions(
+            {"outputs": workflow_response},
+            image_width=300,
+            image_height=220,
+            confidence_threshold=0.5,
+        )
+
+        self.assertTrue(result.person_detected)
+        self.assertTrue(result.face_detected)
+        self.assertEqual(result.missing_items, list(REQUIRED_EPP_CLASSES))
+
     def test_predictions_are_limited_to_one_full_body_person_and_face(self):
         predictions = [
             {"class": "person", "confidence": 0.99, "x": 100, "y": 100, "width": 80, "height": 180},

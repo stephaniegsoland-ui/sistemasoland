@@ -48,6 +48,8 @@ services:
         value: "false"
       - key: ROBOFLOW_API_KEY
         sync: false
+      - key: ROBOFLOW_WORKFLOW_URL
+        sync: false
       - key: ROBOFLOW_MODEL_ID
         sync: false
       - key: ROBOFLOW_CONFIDENCE_THRESHOLD
