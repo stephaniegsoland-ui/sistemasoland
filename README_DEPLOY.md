@@ -6,12 +6,12 @@
 2. Conecta este repositorio.
 3. Crea un nuevo servicio web usando `render.yaml`.
 4. Ajusta las variables de entorno.
-5. Usa la URL generada por Render como `NEXT_PUBLIC_API_URL` en el frontend.
+5. Si usarás un dominio personalizado, asígnalo al servicio en Render y úsalo como `NEXT_PUBLIC_API_URL` en el frontend.
 
 Ejemplo:
 
 ```
-https://soland-api.onrender.com
+https://api.soland.com.ve
 ```
 
 ## Frontend en Daycohost
