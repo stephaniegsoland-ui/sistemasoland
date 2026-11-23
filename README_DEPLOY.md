@@ -33,7 +33,9 @@ No uses SQLite en Render para producción. Configura `DB_URL` con una instancia 
 
 También debes configurar `SECRET`, `DEFAULT_ADMIN_PASSWORD` y `CORS_ALLOWED_ORIGINS` como secretos o variables del servicio. Nunca uses `admin123` fuera de desarrollo.
 
-El manifiesto configura un disco persistente para archivos en `/var/data`. Mantén `MEDIA_ROOT=/var/data` y configura backups del disco y de la base de datos. `BOOTSTRAP_ADMIN=false` evita restablecer la contraseña del administrador en cada arranque; actívalo sólo durante una inicialización controlada y vuelve a desactivarlo después.
+El manifiesto usa el plan gratuito de Render y no configura un disco persistente. El sistema de archivos es efímero: los documentos, fotos, facturas e inspecciones subidos pueden desaparecer al reiniciar o volver a desplegar el servicio. No guardes allí archivos importantes sin migrarlos antes a almacenamiento de objetos. La base de datos externa configurada en `DB_URL` puede tener costos propios. El plan gratuito también puede tardar en responder después de períodos de inactividad.
+
+`BOOTSTRAP_ADMIN=false` evita restablecer la contraseña del administrador en cada arranque; actívalo sólo durante una inicialización controlada y vuelve a desactivarlo después.
 
 El backend rechaza uploads mayores de `MAX_UPLOAD_MB` (15 MB por defecto) y sólo acepta extensiones permitidas por cada endpoint.
 
