@@ -14,16 +14,18 @@ Ejemplo:
 https://soland-api.onrender.com
 ```
 
-## Frontend en Vercel
+## Frontend en Daycohost
 
-1. Importa el proyecto de frontend a Vercel.
-2. Usa estas variables:
+1. Conecta el repositorio del frontend y crea una aplicación Node.js.
+2. Usa Node.js 20.9 o posterior, con estos comandos:
 
 ```
-NEXT_PUBLIC_API_URL=https://soland-api.onrender.com
+Build: npm ci && npm run build
+Start: npm run start
 ```
 
-3. Haz deploy.
+3. Configura `NEXT_PUBLIC_API_URL` con la URL pública real del servicio backend en Render.
+4. Asigna `soland.com.ve` y `www.soland.com.ve` a la aplicación desde el panel de Daycohost.
 
 ## Base de datos de producción
 
@@ -35,18 +37,13 @@ El manifiesto configura un disco persistente para archivos en `/var/data`. Mant�
 
 El backend rechaza uploads mayores de `MAX_UPLOAD_MB` (15 MB por defecto) y sólo acepta extensiones permitidas por cada endpoint.
 
-## Dominio
-
-Si quieres usar `soland.com`:
-
-
 ## CORS
 
-Configura únicamente los orígenes reales, separados por coma:
+`render.yaml` permite los orígenes públicos configurados para Soland. Si cambias de dominio, actualiza `CORS_ALLOWED_ORIGINS` y `FRONTEND_URL` en Render para que coincidan exactamente.
 
 ```
-https://soland.com
-https://www.soland.com
+https://soland.com.ve
+https://www.soland.com.ve
 ```
 
 ## Cloud Run

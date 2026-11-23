@@ -55,7 +55,7 @@ watchfiles==1.2.0
 websockets==16.0
 
 # PDF generation
-reportlab==4.0.0
+reportlab==4.4.10
 
 # Optional ML dependencies for IA classification (install if you want real model inference):
 # torch and transformers provide CLIP zero-shot classification used by app.core.vision

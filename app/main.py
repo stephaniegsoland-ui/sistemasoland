@@ -55,6 +55,8 @@ def get_allowed_origins() -> list[str]:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://frontsoland.vercel.app",
+        "https://www.soland.com.ve",
+        "https://soland.com.ve",
         "https://www.soland.com",
         "https://soland.com",
         "https://api.soland.com",
