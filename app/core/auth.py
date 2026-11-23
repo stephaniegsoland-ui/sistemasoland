@@ -39,13 +39,13 @@ SECRET = os.getenv("SECRET")
 DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
 DEFAULT_ADMIN_EMAIL = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@soland.com")
 APP_ENV = os.getenv("APP_ENV", "development").lower()
-DEFAULT_ADMIN_PASSWORD = os.getenv(
-    "DEFAULT_ADMIN_PASSWORD",
-    None if APP_ENV in {"production", "prod"} else "admin123",
-)
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD")
 BOOTSTRAP_ADMIN = os.getenv(
     "BOOTSTRAP_ADMIN",
     "false" if APP_ENV in {"production", "prod"} else "true",
+).lower() in {"1", "true", "yes", "on"}
+RESET_DEFAULT_ADMIN_PASSWORD = os.getenv(
+    "RESET_DEFAULT_ADMIN_PASSWORD", "false"
 ).lower() in {"1", "true", "yes", "on"}
 
 if not SECRET:
@@ -80,12 +80,7 @@ async def ensure_default_admin_user() -> None:
             logger.info("Created default admin user '%s' with email '%s'", DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL)
             return
 
-        try:
-            password_matches = password_helper.verify(DEFAULT_ADMIN_PASSWORD, existing_user.hashed_password)
-        except Exception:
-            password_matches = False
-
-        if password_matches:
+        if not RESET_DEFAULT_ADMIN_PASSWORD:
             return
 
         existing_user.email = existing_user.email or DEFAULT_ADMIN_EMAIL
@@ -97,7 +92,10 @@ async def ensure_default_admin_user() -> None:
 
         session.add(existing_user)
         await session.commit()
-        logger.info("Reset default admin user '%s' to the known local password", DEFAULT_ADMIN_USERNAME)
+        logger.warning(
+            "Reset default admin user '%s' because RESET_DEFAULT_ADMIN_PASSWORD is enabled",
+            DEFAULT_ADMIN_USERNAME,
+        )
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
@@ -332,6 +330,4 @@ async def get_supervisor_or_admin(user: User = Depends(current_active_user)):
 
 
 __all__ = ["get_supervisor_or_admin"]
-
-
 

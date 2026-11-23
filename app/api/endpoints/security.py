@@ -7,7 +7,7 @@ import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,7 +18,7 @@ from sqlmodel import Field, SQLModel, select
 from sqlalchemy import Column, Text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import current_active_user
+from app.core.auth import current_active_user, get_supervisor_or_admin
 from app.core.storage import media_dir, read_upload, safe_filename_suffix
 from app.core.db import get_async_session
 from app.core.vision import classify_image_bytes, get_best_embedding
@@ -55,6 +55,10 @@ class SecurityEppReport(SQLModel, table=True):
     missing_items: Optional[str] = Field(default=None)
     summary: str = Field(default="", sa_column=Column(Text, nullable=False))
     recommendations: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    access_decision: Optional[str] = Field(default=None, max_length=16)
+    decision_by_user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="user.id")
+    decision_by_username: Optional[str] = Field(default=None, max_length=255)
+    decision_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -72,6 +76,9 @@ class SecurityEppReportRead(BaseModel):
     missing_items: Optional[str] = None
     summary: str
     recommendations: Optional[str] = None
+    access_decision: Optional[str] = None
+    decision_by_username: Optional[str] = None
+    decision_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -91,6 +98,15 @@ class SecurityEppAnalysisResult(BaseModel):
     full_body_detected: bool = True
     recognized_username: Optional[str] = None
     recognition_precision: Optional[float] = None
+    recognized_name: Optional[str] = None
+    recognized_cedula: Optional[str] = None
+    recognized_cargo: Optional[str] = None
+    recognized_photo_path: Optional[str] = None
+    report_id: Optional[uuid.UUID] = None
+
+
+class SecurityEppDecision(BaseModel):
+    decision: Literal["approved", "denied"]
 
 
 EPP_CLASS_ALIASES = {
@@ -449,7 +465,12 @@ def compute_image_hash(image_bytes: bytes) -> str:
 async def recognize_user_by_image(file_bytes: bytes, session: AsyncSession) -> Tuple[Optional[str], Optional[float]]:
     # Try face recognition when available, then LBPH (OpenCV) fallback, then exact hash match.
     # Prefer stored photo_data, but also allow stored photo_path images for legacy users.
-    users_query = select(User).where(or_(User.photo_data != None, User.photo_path != None))
+    users_query = select(User).where(
+        User.is_active == True,
+        User.cedula != None,
+        User.cedula != "",
+        or_(User.photo_data != None, User.photo_path != None),
+    )
     result = await session.execute(users_query)
     users = result.scalars().all()
 
@@ -648,11 +669,11 @@ def build_analysis_summary(
     present_items = analysis.present_items or []
     if recognized_username:
         if not operator_name:
-            prefix = f"Operador identificado como {recognized_username}."
+            prefix = f"Coincidencia visual sugerida con el perfil {recognized_username}."
         else:
-            prefix = f"Operador identificado como {recognized_username} (ingresado: {operator_name})."
+            prefix = f"Coincidencia visual sugerida con {recognized_username} (nombre ingresado: {operator_name})."
     else:
-        prefix = "No se encontró coincidencia con un operador registrado en la foto."
+        prefix = "No se encontró coincidencia visual con una foto de referencia registrada."
 
     if missing_items:
         missing_text = ", ".join(missing_items)
@@ -661,7 +682,7 @@ def build_analysis_summary(
         detail = "No faltan EPP detectados en la imagen."
 
     if recognized_username and recognition_precision is not None:
-        detail += f" Precisión de reconocimiento: {int(recognition_precision * 100)}%."
+        detail += f" Similitud estimada: {int(recognition_precision * 100)}%; confirma la identidad manualmente."
 
     return f"{prefix} {detail}".strip()
 
@@ -940,6 +961,31 @@ async def analyze_epp_image(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Archivo de imagen no válido.") from exc
 
     analysis = await analyze_with_roboflow(file_bytes, image_width, image_height)
+    recognized_username, recognition_precision = (None, None)
+    recognized_user = None
+    if analysis.face_detected:
+        recognized_username, recognition_precision = await recognize_user_by_image(file_bytes, session)
+        if recognized_username:
+            recognized_result = await session.execute(
+                select(User).where(User.username == recognized_username, User.is_active == True)
+            )
+            recognized_user = recognized_result.scalar_one_or_none()
+    analysis.recognized_username = recognized_username
+    analysis.recognition_precision = recognition_precision
+    analysis.recognized_name = (
+        recognized_user.nombre_completo or recognized_user.username
+        if recognized_user
+        else None
+    )
+    analysis.recognized_cedula = recognized_user.cedula if recognized_user else None
+    analysis.recognized_cargo = recognized_user.cargo if recognized_user else None
+    analysis.recognized_photo_path = recognized_user.photo_path if recognized_user else None
+    analysis.summary = build_analysis_summary(
+        analysis,
+        recognized_username,
+        recognition_precision,
+        operator_name,
+    )
     image_name = f"{uuid.uuid4().hex}{safe_filename_suffix(file.filename, '.jpg')}"
     target_path = STATIC_SECURITY_DIR / image_name
     target_path.write_bytes(file_bytes)
@@ -954,7 +1000,7 @@ async def analyze_epp_image(
 
     report = SecurityEppReport(
         user_id=user.id,
-        operator_name=operator_name,
+        operator_name=analysis.recognized_name or operator_name,
         turno=turno,
         notes=notes,
         image_path=f"/static/security/{image_name}",
@@ -969,6 +1015,7 @@ async def analyze_epp_image(
     session.add(report)
     await session.commit()
     await session.refresh(report)
+    analysis.report_id = report.id
     return analysis
 
 
@@ -980,3 +1027,27 @@ async def get_epp_history(
     query = select(SecurityEppReport).where(SecurityEppReport.user_id == user.id).order_by(SecurityEppReport.created_at.desc())
     result = await session.execute(query)
     return result.scalars().all()
+
+
+@router.patch("/epp/history/{report_id}/decision", response_model=SecurityEppReportRead)
+async def decide_epp_access(
+    report_id: uuid.UUID,
+    decision: SecurityEppDecision,
+    session: AsyncSession = Depends(get_async_session),
+    user: User = Depends(get_supervisor_or_admin),
+):
+    report = await session.get(SecurityEppReport, report_id)
+    if report is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inspección EPP no encontrada.",
+        )
+
+    report.access_decision = decision.decision
+    report.decision_by_user_id = user.id
+    report.decision_by_username = user.username
+    report.decision_at = datetime.now()
+    session.add(report)
+    await session.commit()
+    await session.refresh(report)
+    return report

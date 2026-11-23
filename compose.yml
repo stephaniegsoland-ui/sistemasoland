@@ -29,6 +29,9 @@ services:
       DB_URL: ${DB_URL_DOCKER}
       SECRET: ${SECRET}
       USE_SQLITE_FALLBACK: "false"
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
+      RESET_DEFAULT_ADMIN_PASSWORD: ${RESET_DEFAULT_ADMIN_PASSWORD:-false}
+      BOOTSTRAP_ADMIN: ${BOOTSTRAP_ADMIN:-true}
     ports:
       - "8000:8000"
     restart: unless-stopped

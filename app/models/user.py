@@ -11,6 +11,7 @@ class BaseUser(SQLModel):
     level: int = Field(default=3, description="1: Admin, 2: Supervisor, 3: Usuario")
     department: Optional[str] = Field(default=None, description="Departamento o área del usuario")
     nombre_completo: Optional[str] = Field(default=None, description="Nombre completo del usuario")
+    cedula: Optional[str] = Field(default=None, max_length=32, description="Cédula de identidad del usuario")
     cargo: Optional[str] = Field(default=None, description="Cargo o puesto del usuario")
     hoja_vida: Optional[str] = Field(default=None, description="Hoja de vida / perfil del usuario")
     photo_data: Optional[str] = Field(default=None, nullable=True)

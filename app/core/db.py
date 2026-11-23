@@ -138,6 +138,7 @@ async def create_db_and_tables():
                 sqlite_user_columns = {
                     "department": "VARCHAR(255)",
                     "nombre_completo": "VARCHAR(255)",
+                    "cedula": "VARCHAR(32) NULL",
                     "cargo": "VARCHAR(255)",
                     "hoja_vida": "TEXT",
                     "photo_data": "TEXT",
@@ -246,6 +247,7 @@ async def create_db_and_tables():
                 "user": {
                     "department": "VARCHAR(255) NULL",
                     "nombre_completo": "VARCHAR(255) NULL",
+                    "cedula": "VARCHAR(32) NULL",
                     "cargo": "VARCHAR(255) NULL",
                     "hoja_vida": "TEXT NULL",
                     "photo_data": "LONGTEXT NULL",
@@ -274,6 +276,10 @@ async def create_db_and_tables():
                     "summary": "TEXT NOT NULL",
                     "recommendations": "TEXT NULL",
                     "thumbnail_path": "VARCHAR(255) NULL",
+                    "access_decision": "VARCHAR(16) NULL",
+                    "decision_by_user_id": "CHAR(32) NULL",
+                    "decision_by_username": "VARCHAR(255) NULL",
+                    "decision_at": "DATETIME NULL",
                 },
                 "safety_permit": {
                     "extracted_text": "TEXT NOT NULL",
@@ -374,4 +380,3 @@ async def create_db_and_tables():
                     pass
     except Exception as exc:
         raise RuntimeError("Database initialization failed") from exc
-

@@ -15,7 +15,7 @@ from app.schemas.user import UserRead, UserCreate, UserUpdate
 from app.api.endpoints import (
     categories, inventary, notifications, type_record, vehicle, procura, timesheet,
     chat, users, security, peaje, safety_permits, companies, environment, documents,
-    admin_overview, assistant, debug_photos, settings, login,
+    admin_overview, assistant, debug_photos, settings, login, quality_cad,
 )
 
 
@@ -190,6 +190,10 @@ app.include_router(
 
 app.include_router(
     documents.router, prefix="/api/documents", tags=["Gestión Documental"]
+)
+
+app.include_router(
+    quality_cad.router, prefix="/api", tags=["Calidad y CAD"]
 )
 
 app.include_router(

@@ -12,6 +12,7 @@ class UserRead(schemas.BaseUser[uuid.UUID]):
     level: int
     department: Optional[str] = None
     nombre_completo: Optional[str] = None
+    cedula: Optional[str] = None
     cargo: Optional[str] = None
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None
@@ -31,6 +32,7 @@ class UserCreate(schemas.BaseUserCreate):
     username: str
     department: Optional[str] = None
     nombre_completo: Optional[str] = None
+    cedula: Optional[str] = None
     cargo: Optional[str] = None
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None
@@ -47,6 +49,7 @@ class UserUpdate(schemas.BaseUserUpdate):
     username: Optional[str] = None
     department: Optional[str] = None
     nombre_completo: Optional[str] = None
+    cedula: Optional[str] = None
     cargo: Optional[str] = None
     hoja_vida: Optional[str] = None
     photo_data: Optional[str] = None

@@ -33,6 +33,7 @@ class UserProfileUpdate(BaseModel):
     username: Optional[str] = Field(default=None, min_length=3, max_length=50)
     email: Optional[EmailStr] = None
     nombre_completo: Optional[str] = Field(default=None, max_length=255)
+    cedula: Optional[str] = Field(default=None, max_length=32)
     department: Optional[str] = Field(default=None, max_length=255)
     cargo: Optional[str] = Field(default=None, max_length=255)
     hoja_vida: Optional[str] = Field(default=None, max_length=2000)
