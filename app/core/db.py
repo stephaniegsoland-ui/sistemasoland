@@ -1,10 +1,13 @@
+import asyncio
 import os
 import base64
+import logging
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 from sqlalchemy import text
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
@@ -13,6 +16,9 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.models.user import User
 from app.core.storage import media_dir
+
+logger = logging.getLogger(__name__)
+TRANSIENT_MYSQL_ERROR_CODES = {1040, 2002, 2003, 2006, 2013, 2055}
 
 
 def resolve_database_url(raw_url: str | None = None) -> str:
@@ -71,7 +77,13 @@ def normalize_database_url(raw_url: str | None) -> str:
 
 DATABASE_URL = resolve_database_url(os.getenv("DB_URL"))
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+engine_options = {"echo": False, "pool_pre_ping": True}
+if DATABASE_URL.startswith("mysql"):
+    engine_options.update(
+        pool_recycle=1800,
+        connect_args={"connect_timeout": 10},
+    )
+engine = create_async_engine(DATABASE_URL, **engine_options)
 
 
 async def get_async_session():
@@ -127,7 +139,53 @@ async def repair_legacy_user_photos():
         print(f"Repaired {repaired} legacy user photos.")
 
 
+def _mysql_error_code(error: BaseException) -> int | None:
+    current: BaseException | None = error
+    while current is not None:
+        original = getattr(current, "orig", None)
+        error_args = getattr(original, "args", ())
+        if error_args:
+            try:
+                return int(error_args[0])
+            except (TypeError, ValueError):
+                pass
+        current = current.__cause__
+    return None
+
+
 async def create_db_and_tables():
+    max_attempts = 4
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await _create_db_and_tables_once()
+            return
+        except RuntimeError as exc:
+            cause = exc.__cause__ or exc
+            error_code = _mysql_error_code(cause)
+            retryable = isinstance(cause, (InterfaceError, OperationalError)) and (
+                error_code is None or error_code in TRANSIENT_MYSQL_ERROR_CODES
+            )
+            if not retryable or attempt == max_attempts:
+                logger.error(
+                    "Database initialization failed (cause=%s, MySQL error=%s).",
+                    type(cause).__name__,
+                    error_code,
+                )
+                raise
+
+            delay = 2 ** attempt
+            logger.warning(
+                "Transient database connection failure (MySQL error %s); "
+                "retrying startup in %s seconds (attempt %s/%s).",
+                error_code,
+                delay,
+                attempt,
+                max_attempts,
+            )
+            await asyncio.sleep(delay)
+
+
+async def _create_db_and_tables_once():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
